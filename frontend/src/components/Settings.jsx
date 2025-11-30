@@ -174,15 +174,21 @@ export default function Settings({ onClose, ollamaStatus, onRefreshOllama }) {
       setSelectedSearchProvider(data.search_provider || 'duckduckgo');
       setFullContentResults(data.full_content_results ?? 3);
 
-      // Enabled Providers - auto-enable any configured providers
-      const hasDirectConfigured = !!(data.openai_api_key_set || data.anthropic_api_key_set ||
-        data.google_api_key_set || data.mistral_api_key_set || data.deepseek_api_key_set);
+      // Enabled Providers - use saved settings if available, otherwise auto-enable based on configured keys
+      if (data.enabled_providers) {
+        // User has explicitly set their preferences - use them
+        setEnabledProviders(data.enabled_providers);
+      } else {
+        // First time or no saved preferences - auto-enable based on what's configured
+        const hasDirectConfigured = !!(data.openai_api_key_set || data.anthropic_api_key_set ||
+          data.google_api_key_set || data.mistral_api_key_set || data.deepseek_api_key_set);
 
-      setEnabledProviders({
-        openrouter: !!data.openrouter_api_key_set || (!hasDirectConfigured && !ollamaStatus?.connected),
-        ollama: ollamaStatus?.connected || false,
-        direct: hasDirectConfigured
-      });
+        setEnabledProviders({
+          openrouter: !!data.openrouter_api_key_set || (!hasDirectConfigured && !ollamaStatus?.connected),
+          ollama: ollamaStatus?.connected || false,
+          direct: hasDirectConfigured
+        });
+      }
 
       // Individual direct provider toggles
       setDirectProviderToggles({
@@ -1522,7 +1528,6 @@ export default function Settings({ onClose, ollamaStatus, onRefreshOllama }) {
                 <ul>
                   <li>All model selections</li>
                   <li>System prompts</li>
-                  <li>Utility models</li>
                   <li>General settings</li>
                 </ul>
                 <p className="confirmation-safe">✓ API keys will be PRESERVED</p>
