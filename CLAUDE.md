@@ -446,6 +446,12 @@ curl http://localhost:11434/api/tags
    - Added defensive programming in `parse_ranking_from_text()` function
    - Prevents "expected string or bytes-like object" errors and `[object Object]` display
 
+6. **Model Deduplication:**
+   - When multiple sources provide same model (e.g., OpenRouter + Direct Mistral), duplicates appeared
+   - Added Map-based deduplication in `getAllAvailableModels()`
+   - Prefers direct connections over OpenRouter for same model ID
+   - Eliminates React "duplicate key" warnings
+
 **Pending Work:**
 - Settings UI refactoring: Decision needed on layout (Sidebar vs. Tabs) to reduce scrolling
 - Optional optimizations: Settings state simplification, request caching
