@@ -31,9 +31,14 @@ class OllamaProvider(LLMProvider):
                 data = response.json()
                 models = []
                 for model in data.get("models", []):
+                    model_name = model.get("name", "")
+                    # Filter out embedding models
+                    if "embed" in model_name.lower():
+                        continue
+                        
                     models.append({
-                        "id": f"ollama:{model.get('name')}",
-                        "name": model.get("name"),
+                        "id": f"ollama:{model_name}",
+                        "name": model_name,
                         "provider": "Ollama",
                         "is_free": True
                     })

@@ -560,18 +560,19 @@ export default function Settings({ onClose, ollamaStatus, onRefreshOllama }) {
 
     // Logic for Groq Warnings
     // Groq: 30 RPM, 14,400 RPD (for Llama models)
-    if (councilModels.some(id => id.startsWith('groq:'))) groqCount += totalCouncilMembers;
-    if (chairmanModel.startsWith('groq:')) groqCount++;
-    if (searchQueryModel.startsWith('groq:')) groqCount++;
+    let groqRequests = 0;
+    councilModels.forEach(id => {
+      if (id.startsWith('groq:')) groqRequests += 2; // Stage 1 + Stage 2
+    });
+    if (chairmanModel.startsWith('groq:')) groqRequests += 1;
+    if (searchQueryModel.startsWith('groq:')) groqRequests += 1;
 
-    if (groqCount > 0) {
-      if (totalRequestsPerRun > 20) { // 20 requests is approx two-thirds of 30 RPM
-        return {
-          type: 'warning',
-          title: 'High Concurrency Caution (Groq)',
-          message: `Your council configuration generates ~${totalRequestsPerRun} requests per run using Groq. This might approach the 30 requests/minute limit for Groq. You may experience occasional throttling.`
-        };
-      }
+    if (groqRequests > 15) {
+      return {
+        type: 'warning',
+        title: 'High Concurrency Caution (Groq)',
+        message: `Your configuration uses ${groqRequests} Groq requests per run. The free tier limit is 30 requests/minute. You may experience throttling if you send messages quickly.`
+      };
     }
 
     return null;
@@ -581,12 +582,21 @@ export default function Settings({ onClose, ollamaStatus, onRefreshOllama }) {
 
   const handleFeelingLucky = () => {
     // 1. Get pool of available models respecting "Free Only" filter
-    const candidateModels = getFilteredAvailableModels();
+    let candidateModels = getFilteredAvailableModels();
     
     if (!candidateModels || candidateModels.length === 0) {
       setError("No models available to randomize! Check your enabled providers.");
       setTimeout(() => setError(null), 3000);
       return;
+    }
+
+    // Filter out models with known small context windows (< 8k) to prevent Stage 2 errors
+    // Note: context_length might be undefined for some providers, we assume those are safe or unknown
+    const safeModels = candidateModels.filter(m => !m.context_length || m.context_length >= 8192);
+    
+    // If we have enough safe models, use them. Otherwise fallback to all.
+    if (safeModels.length >= 2) {
+        candidateModels = safeModels;
     }
 
     // Helper to pick random item

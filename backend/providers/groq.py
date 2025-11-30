@@ -68,6 +68,11 @@ class GroqProvider(LLMProvider):
                 data = response.json()
                 models = []
                 for model in data.get("data", []):
+                    model_id = model["id"]
+                    # Filter out non-chat models (Audio, TTS, etc.)
+                    if "whisper" in model_id.lower() or "tts" in model_id.lower():
+                        continue
+                        
                     # Groq models usually have clean IDs like "llama3-70b-8192"
                     models.append({
                         "id": f"groq:{model['id']}",
