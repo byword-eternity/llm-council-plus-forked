@@ -381,7 +381,6 @@ async def get_default_settings():
         "stage1_prompt": STAGE1_PROMPT_DEFAULT,
         "stage2_prompt": STAGE2_PROMPT_DEFAULT,
         "stage3_prompt": STAGE3_PROMPT_DEFAULT,
-        "title_prompt": TITLE_PROMPT_DEFAULT,
         "search_query_prompt": SEARCH_QUERY_PROMPT_DEFAULT,
     }
 

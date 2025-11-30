@@ -35,6 +35,8 @@ const DIRECT_PROVIDERS = [
 ];
 
 export default function Settings({ onClose, ollamaStatus, onRefreshOllama }) {
+  const [activeSection, setActiveSection] = useState('council'); // 'council', 'api_keys', 'prompts', 'general'
+  
   const [settings, setSettings] = useState(null);
   const [selectedSearchProvider, setSelectedSearchProvider] = useState('duckduckgo');
   const [fullContentResults, setFullContentResults] = useState(3);
@@ -505,6 +507,7 @@ export default function Settings({ onClose, ollamaStatus, onRefreshOllama }) {
 
       // Web Search Query Generator
       setSearchQueryModel(defaults.search_query_model);
+      setSearchQueryFilter('remote'); // Ensure filter matches default model
 
       // Prompts
       setPrompts({
@@ -850,299 +853,217 @@ export default function Settings({ onClose, ollamaStatus, onRefreshOllama }) {
           <button className="close-button" onClick={onClose}>&times;</button>
         </div>
 
-        <div className="settings-content">
+        <div className="settings-body">
+          {/* Sidebar Navigation */}
+          <div className="settings-sidebar">
+            <button 
+              className={`sidebar-nav-item ${activeSection === 'council' ? 'active' : ''}`}
+              onClick={() => setActiveSection('council')}
+            >
+              Council Config
+            </button>
+            <button 
+              className={`sidebar-nav-item ${activeSection === 'api_keys' ? 'active' : ''}`}
+              onClick={() => setActiveSection('api_keys')}
+            >
+              API Keys
+            </button>
+            <button 
+              className={`sidebar-nav-item ${activeSection === 'prompts' ? 'active' : ''}`}
+              onClick={() => setActiveSection('prompts')}
+            >
+              System Prompts
+            </button>
+            <button 
+              className={`sidebar-nav-item ${activeSection === 'general' ? 'active' : ''}`}
+              onClick={() => setActiveSection('general')}
+            >
+              General & Search
+            </button>
+          </div>
 
-          {/* API Keys Configuration */}
-          <section className="settings-section">
-            <h3>API Keys</h3>
-            <p className="section-description">
-              Configure your API keys for different LLM providers and services.
-            </p>
+          {/* Main Content Area */}
+          <div className="settings-main-panel">
+            
+            {/* COUNCIL CONFIGURATION */}
+            {activeSection === 'council' && (
+              <>
+                <section className="settings-section">
+                  <h3>Available Model Sources</h3>
+                  <p className="section-description">
+                    Toggle which providers are available for the search generator, council members, and chairman.
+                  </p>
 
-            {/* OpenRouter */}
-            <div className="api-key-section">
-              <label>OpenRouter API Key</label>
-              <div className="api-key-input-row">
-                <input
-                  type="password"
-                  placeholder={settings?.openrouter_api_key_set ? '••••••••••••••••' : 'Enter API key'}
-                  value={openrouterApiKey}
-                  onChange={(e) => {
-                    setOpenrouterApiKey(e.target.value);
-                    setOpenrouterTestResult(null);
-                  }}
-                  className={settings?.openrouter_api_key_set && !openrouterApiKey ? 'key-configured' : ''}
-                />
-                <button
-                  className="test-button"
-                  onClick={handleTestOpenRouter}
-                  disabled={!openrouterApiKey && !settings?.openrouter_api_key_set || isTestingOpenRouter}
-                >
-                  {isTestingOpenRouter ? 'Testing...' : (settings?.openrouter_api_key_set && !openrouterApiKey ? 'Retest' : 'Test')}
-                </button>
-              </div>
-              {settings?.openrouter_api_key_set && !openrouterApiKey && (
-                <div className="key-status set">✓ API key configured</div>
-              )}
-              {openrouterTestResult && (
-                <div className={`test-result ${openrouterTestResult.success ? 'success' : 'error'}`}>
-                  {openrouterTestResult.message}
-                </div>
-              )}
-              <p className="api-key-hint">
-                Get your key from <a href="https://openrouter.ai/keys" target="_blank" rel="noopener noreferrer">openrouter.ai</a>
-              </p>
-            </div>
+                  <div className="hybrid-settings-card">
+                    {/* Primary Sources */}
+                    <div className="filter-group">
+                      <label className="toggle-wrapper">
+                        <div className="toggle-switch">
+                          <input
+                            type="checkbox"
+                            checked={enabledProviders.openrouter}
+                            onChange={(e) => setEnabledProviders(prev => ({ ...prev, openrouter: e.target.checked }))}
+                          />
+                          <span className="slider"></span>
+                        </div>
+                        <span className="toggle-text">OpenRouter (Cloud)</span>
+                      </label>
 
-            {/* Ollama */}
-            <div className="api-key-section">
-              <label>Ollama Base URL</label>
-              <div className="api-key-input-row">
-                <input
-                  type="text"
-                  placeholder="http://localhost:11434"
-                  value={ollamaBaseUrl}
-                  onChange={(e) => {
-                    setOllamaBaseUrl(e.target.value);
-                    setOllamaTestResult(null);
-                  }}
-                />
-                <button
-                  className="test-button"
-                  onClick={handleTestOllama}
-                  disabled={!ollamaBaseUrl || isTestingOllama}
-                >
-                  {isTestingOllama ? 'Testing...' : 'Connect'}
-                </button>
-              </div>
-              {ollamaTestResult && (
-                <div className={`test-result ${ollamaTestResult.success ? 'success' : 'error'}`}>
-                  {ollamaTestResult.message}
-                </div>
-              )}
-              {ollamaStatus && ollamaStatus.connected && (
-                <div className="ollama-auto-status connected">
-                  <span className="status-indicator connected">●</span>
-                  <span className="status-text">
-                    <strong>Connected to Ollama</strong> <span className="status-separator">·</span> <span className="status-time">Last checked: {new Date(ollamaStatus.lastConnected).toLocaleString()}</span>
-                  </span>
-                </div>
-              )}
-              {ollamaStatus && !ollamaStatus.connected && !ollamaStatus.testing && (
-                <div className="ollama-auto-status">
-                  <span className="status-indicator disconnected">●</span>
-                  <span className="status-text">Not connected</span>
-                </div>
-              )}
-              <p className="api-key-hint">
-                Default is http://localhost:11434
-              </p>
-              <div className="model-options-row" style={{ marginTop: '12px' }}>
-                <button
-                  type="button"
-                  className="reset-defaults-button"
-                  onClick={() => loadOllamaModels(ollamaBaseUrl)}
-                >
-                  Refresh Local Models
-                </button>
-                {ollamaAvailableModels.length === 0 && enabledProviders.ollama && (
-                  <span className="error-text">No local models found. Check connection.</span>
-                )}
-              </div>
-            </div>
-
-            {/* Direct LLM API Connections */}
-            <div className="subsection" style={{ marginTop: '24px' }}>
-              <h4>Direct LLM API Connections</h4>
-              <p className="section-description" style={{ marginBottom: '12px' }}>
-                Connect directly to LLM providers using your own API keys.
-              </p>
-
-              {DIRECT_PROVIDERS.map(dp => (
-                <div key={dp.id} className="api-key-section">
-                  <label>{dp.name} API Key</label>
-                  <div className="api-key-input-row">
-                    <input
-                      type="password"
-                      placeholder={settings?.[`${dp.key}_set`] ? '••••••••••••••••' : 'Enter API key'}
-                      value={directKeys[dp.key]}
-                      onChange={e => setDirectKeys(prev => ({ ...prev, [dp.key]: e.target.value }))}
-                      className={settings?.[`${dp.key}_set`] && !directKeys[dp.key] ? 'key-configured' : ''}
-                    />
-                    <button
-                      className="test-button"
-                      onClick={() => handleTestDirectKey(dp.id, dp.key)}
-                      disabled={(!directKeys[dp.key] && !settings?.[`${dp.key}_set`]) || validatingKeys[dp.id]}
-                    >
-                      {validatingKeys[dp.id] ? 'Testing...' : (settings?.[`${dp.key}_set`] && !directKeys[dp.key] ? 'Retest' : 'Test')}
-                    </button>
-                  </div>
-                  {settings?.[`${dp.key}_set`] && !directKeys[dp.key] && (
-                    <div className="key-status set">✓ API key configured</div>
-                  )}
-                  {keyValidationStatus[dp.id] && (
-                    <div className={`test-result ${keyValidationStatus[dp.id].success ? 'success' : 'error'}`}>
-                      {keyValidationStatus[dp.id].message}
+                      <label className="toggle-wrapper">
+                        <div className="toggle-switch">
+                          <input
+                            type="checkbox"
+                            checked={enabledProviders.ollama}
+                            onChange={(e) => setEnabledProviders(prev => ({ ...prev, ollama: e.target.checked }))}
+                          />
+                          <span className="slider"></span>
+                        </div>
+                        <span className="toggle-text">Local (Ollama)</span>
+                      </label>
                     </div>
-                  )}
-                </div>
-              ))}
-            </div>
-          </section>
 
-          {/* Available Model Sources */}
-          <section className="settings-section">
-            <h3>Available Model Sources</h3>
-            <p className="section-description">
-              Toggle which providers are available for the search generator, council members, and chairman. Configure API keys above before enabling.
-            </p>
+                    <div className="filter-divider"></div>
 
-            <div className="hybrid-settings-card">
-              {/* Primary Sources */}
-              <div className="filter-group">
-                <label className="toggle-wrapper">
-                  <div className="toggle-switch">
-                    <input
-                      type="checkbox"
-                      checked={enabledProviders.openrouter}
-                      onChange={(e) => setEnabledProviders(prev => ({ ...prev, openrouter: e.target.checked }))}
-                    />
-                    <span className="slider"></span>
-                  </div>
-                  <span className="toggle-text">OpenRouter (Cloud)</span>
-                </label>
+                    {/* Direct Connections Master Toggle */}
+                    <div className="filter-group" style={{ marginBottom: enabledProviders.direct ? '16px' : '0' }}>
+                      <label className="toggle-wrapper">
+                        <div className="toggle-switch">
+                          <input
+                            type="checkbox"
+                            checked={enabledProviders.direct}
+                            onChange={(e) => setEnabledProviders(prev => ({ ...prev, direct: e.target.checked }))}
+                          />
+                          <span className="slider"></span>
+                        </div>
+                        <span className="toggle-text">Direct Connections</span>
+                      </label>
+                    </div>
 
-                <label className="toggle-wrapper">
-                  <div className="toggle-switch">
-                    <input
-                      type="checkbox"
-                      checked={enabledProviders.ollama}
-                      onChange={(e) => setEnabledProviders(prev => ({ ...prev, ollama: e.target.checked }))}
-                    />
-                    <span className="slider"></span>
-                  </div>
-                  <span className="toggle-text">Local (Ollama)</span>
-                </label>
-              </div>
-
-              <div className="filter-divider"></div>
-
-              {/* Direct Connections Master Toggle */}
-              <div className="filter-group" style={{ marginBottom: enabledProviders.direct ? '16px' : '0' }}>
-                <label className="toggle-wrapper">
-                  <div className="toggle-switch">
-                    <input
-                      type="checkbox"
-                      checked={enabledProviders.direct}
-                      onChange={(e) => setEnabledProviders(prev => ({ ...prev, direct: e.target.checked }))}
-                    />
-                    <span className="slider"></span>
-                  </div>
-                  <span className="toggle-text">Direct Connections</span>
-                </label>
-              </div>
-
-              {/* Individual Direct Provider Toggles (purple) */}
-              {enabledProviders.direct && (
-                <div className="direct-grid">
-                  {DIRECT_PROVIDERS.map(dp => (
-                    <label key={dp.id} className="toggle-wrapper">
-                      <div className="toggle-switch direct-toggle">
-                        <input
-                          type="checkbox"
-                          checked={directProviderToggles[dp.id]}
-                          onChange={(e) => setDirectProviderToggles(prev => ({ ...prev, [dp.id]: e.target.checked }))}
-                        />
-                        <span className="slider"></span>
+                    {/* Individual Direct Provider Toggles (purple) */}
+                    {enabledProviders.direct && (
+                      <div className="direct-grid">
+                        {DIRECT_PROVIDERS.map(dp => (
+                          <label key={dp.id} className="toggle-wrapper">
+                            <div className="toggle-switch direct-toggle">
+                              <input
+                                type="checkbox"
+                                checked={directProviderToggles[dp.id]}
+                                onChange={(e) => setDirectProviderToggles(prev => ({ ...prev, [dp.id]: e.target.checked }))}
+                              />
+                              <span className="slider"></span>
+                            </div>
+                            <span className="toggle-text" style={{ fontSize: '13px' }}>
+                              {dp.name}
+                            </span>
+                          </label>
+                        ))}
                       </div>
-                      <span className="toggle-text" style={{ fontSize: '13px' }}>
-                        {dp.name}
-                      </span>
+                    )}
+                  </div>
+                </section>
+
+                <section className="settings-section">
+                  <h3>Council Composition</h3>
+                  <div className="model-options-row">
+                    <label className="free-filter-label">
+                      <input
+                        type="checkbox"
+                        checked={showFreeOnly}
+                        onChange={e => setShowFreeOnly(e.target.checked)}
+                      />
+                      Show free OpenRouter models only
                     </label>
-                  ))}
-                </div>
-              )}
-            </div>
-          </section>
+                    {isLoadingModels && <span className="loading-models">Loading models...</span>}
+                  </div>
 
-          {/* Web Search Query Generator */}
-          <section className="settings-section">
-            <h3>Web Search Query Generator</h3>
-            <p className="section-description">
-              Select a model to generate optimized search queries from user questions.
-            </p>
+                  {/* Council Members */}
+                  <div className="subsection" style={{ marginTop: '20px' }}>
+                    <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '12px' }}>
+                      <h4 style={{ margin: 0 }}>Council Members</h4>
+                    </div>
+                    <div className="council-members">
+                      {councilModels.map((modelId, index) => {
+                        const memberFilter = getMemberFilter(index);
+                        return (
+                          <div key={index} className="council-member-row">
+                            <span className="member-label">Member {index + 1}</span>
+                            <div className="model-type-toggle">
+                              <button
+                                type="button"
+                                className={`type-btn ${memberFilter === 'remote' ? 'active' : ''}`}
+                                onClick={() => handleMemberFilterChange(index, 'remote')}
+                                disabled={!enabledProviders.openrouter && !enabledProviders.direct}
+                                title={!enabledProviders.openrouter && !enabledProviders.direct ? 'Enable OpenRouter or Direct Connections first' : ''}
+                              >
+                                Remote
+                              </button>
+                              <button
+                                type="button"
+                                className={`type-btn ${memberFilter === 'local' ? 'active' : ''}`}
+                                onClick={() => handleMemberFilterChange(index, 'local')}
+                                disabled={!enabledProviders.ollama || ollamaAvailableModels.length === 0}
+                                title={!enabledProviders.ollama || ollamaAvailableModels.length === 0 ? 'Enable and connect Ollama first' : ''}
+                              >
+                                Local
+                              </button>
+                            </div>
+                            <select
+                              value={modelId}
+                              onChange={e => handleCouncilModelChange(index, e.target.value)}
+                              className="model-select"
+                            >
+                              {renderModelOptions(filterByRemoteLocal(getFilteredAvailableModels(), memberFilter))}
+                              {/* Keep current selection visible even if filtered out */}
+                              {!filterByRemoteLocal(getFilteredAvailableModels(), memberFilter).find(m => m.id === modelId) && (
+                                <option value={modelId}>
+                                  {getAllAvailableModels().find(m => m.id === modelId)?.name || modelId}
+                                </option>
+                              )}
+                            </select>
+                            {index >= 2 && (
+                              <button
+                                type="button"
+                                className="remove-member-button"
+                                onClick={() => handleRemoveCouncilMember(index)}
+                                title="Remove member"
+                              >
+                                ×
+                              </button>
+                            )}
+                          </div>
+                        );
+                      })}
+                    </div>
+                    <button
+                      type="button"
+                      className="add-member-button"
+                      onClick={handleAddCouncilMember}
+                      disabled={getFilteredAvailableModels().length === 0 || councilModels.length >= 8}
+                    >
+                      + Add Council Member
+                    </button>
+                    <p className="section-description" style={{ marginTop: '8px', marginBottom: '0' }}>
+                      Max 8 members. With 6+ members, requests are processed in batches.
+                    </p>
+                    {councilModels.length >= 6 && (
+                      <div className="council-size-warning">
+                        ⚠️ <strong>6+ members:</strong> Requests will be processed in batches of 3 to avoid rate limits.
+                      </div>
+                    )}
+                  </div>
 
-            <div className="council-member-row">
-              <span className="member-label">Search Query Model</span>
-              <div className="model-type-toggle">
-                <button
-                  type="button"
-                  className={`type-btn ${searchQueryFilter === 'remote' ? 'active' : ''}`}
-                  onClick={() => {
-                    setSearchQueryFilter('remote');
-                    setSearchQueryModel('');
-                  }}
-                  disabled={!enabledProviders.openrouter && !enabledProviders.direct}
-                  title={!enabledProviders.openrouter && !enabledProviders.direct ? 'Enable OpenRouter or Direct Connections first' : ''}
-                >
-                  Remote
-                </button>
-                <button
-                  type="button"
-                  className={`type-btn ${searchQueryFilter === 'local' ? 'active' : ''}`}
-                  onClick={() => {
-                    setSearchQueryFilter('local');
-                    setSearchQueryModel('');
-                  }}
-                  disabled={!enabledProviders.ollama || ollamaAvailableModels.length === 0}
-                  title={!enabledProviders.ollama || ollamaAvailableModels.length === 0 ? 'Enable and connect Ollama first' : ''}
-                >
-                  Local
-                </button>
-              </div>
-              <select
-                value={searchQueryModel}
-                onChange={(e) => setSearchQueryModel(e.target.value)}
-                className="model-select"
-              >
-                <option value="">Select a model</option>
-                {renderModelOptions(filterByRemoteLocal(getAllAvailableModels(), searchQueryFilter))}
-              </select>
-            </div>
-          </section>
-
-          {/* Council Configuration */}
-          <section className="settings-section">
-            <h3>Council Configuration</h3>
-
-            <div className="model-options-row">
-              <label className="free-filter-label">
-                <input
-                  type="checkbox"
-                  checked={showFreeOnly}
-                  onChange={e => setShowFreeOnly(e.target.checked)}
-                />
-                Show free OpenRouter models only
-              </label>
-              {isLoadingModels && <span className="loading-models">Loading models...</span>}
-            </div>
-
-            {/* Council Members */}
-            <div className="subsection" style={{ marginTop: '20px' }}>
-              <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '12px' }}>
-                <h4 style={{ margin: 0 }}>Council Members</h4>
-              </div>
-              <div className="council-members">
-                {councilModels.map((modelId, index) => {
-                  const memberFilter = getMemberFilter(index);
-                  return (
-                    <div key={index} className="council-member-row">
-                      <span className="member-label">Member {index + 1}</span>
+                  {/* Chairman */}
+                  <div className="subsection" style={{ marginTop: '24px' }}>
+                    <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '8px' }}>
+                      <h4 style={{ margin: 0 }}>Chairman Model</h4>
                       <div className="model-type-toggle">
                         <button
                           type="button"
-                          className={`type-btn ${memberFilter === 'remote' ? 'active' : ''}`}
-                          onClick={() => handleMemberFilterChange(index, 'remote')}
+                          className={`type-btn ${chairmanFilter === 'remote' ? 'active' : ''}`}
+                          onClick={() => {
+                            setChairmanFilter('remote');
+                            setChairmanModel('');
+                          }}
                           disabled={!enabledProviders.openrouter && !enabledProviders.direct}
                           title={!enabledProviders.openrouter && !enabledProviders.direct ? 'Enable OpenRouter or Direct Connections first' : ''}
                         >
@@ -1150,349 +1071,456 @@ export default function Settings({ onClose, ollamaStatus, onRefreshOllama }) {
                         </button>
                         <button
                           type="button"
-                          className={`type-btn ${memberFilter === 'local' ? 'active' : ''}`}
-                          onClick={() => handleMemberFilterChange(index, 'local')}
+                          className={`type-btn ${chairmanFilter === 'local' ? 'active' : ''}`}
+                          onClick={() => {
+                            setChairmanFilter('local');
+                            setChairmanModel('');
+                          }}
                           disabled={!enabledProviders.ollama || ollamaAvailableModels.length === 0}
                           title={!enabledProviders.ollama || ollamaAvailableModels.length === 0 ? 'Enable and connect Ollama first' : ''}
                         >
                           Local
                         </button>
                       </div>
+                    </div>
+                    <div className="chairman-selection">
                       <select
-                        value={modelId}
-                        onChange={e => handleCouncilModelChange(index, e.target.value)}
+                        value={chairmanModel}
+                        onChange={(e) => setChairmanModel(e.target.value)}
                         className="model-select"
                       >
-                        {renderModelOptions(filterByRemoteLocal(getFilteredAvailableModels(), memberFilter))}
-                        {/* Keep current selection visible even if filtered out */}
-                        {!filterByRemoteLocal(getFilteredAvailableModels(), memberFilter).find(m => m.id === modelId) && (
-                          <option value={modelId}>
-                            {getAllAvailableModels().find(m => m.id === modelId)?.name || modelId}
-                          </option>
-                        )}
+                        <option value="">Select a model</option>
+                        {renderModelOptions(filterByRemoteLocal(getChairmanModels(), chairmanFilter))}
                       </select>
-                      <button
-                        type="button"
-                        className="remove-member-button"
-                        onClick={() => handleRemoveCouncilMember(index)}
-                        disabled={councilModels.length <= 2}
-                        title="Remove member"
+                    </div>
+                  </div>
+
+                  {/* Web Search Query Generator */}
+                  <div className="subsection" style={{ marginTop: '24px' }}>
+                    <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '8px' }}>
+                      <h4 style={{ margin: 0 }}>Search Query Generator</h4>
+                      <div className="model-type-toggle">
+                        <button
+                          type="button"
+                          className={`type-btn ${searchQueryFilter === 'remote' ? 'active' : ''}`}
+                          onClick={() => {
+                            setSearchQueryFilter('remote');
+                            setSearchQueryModel('');
+                          }}
+                          disabled={!enabledProviders.openrouter && !enabledProviders.direct}
+                          title={!enabledProviders.openrouter && !enabledProviders.direct ? 'Enable OpenRouter or Direct Connections first' : ''}
+                        >
+                          Remote
+                        </button>
+                        <button
+                          type="button"
+                          className={`type-btn ${searchQueryFilter === 'local' ? 'active' : ''}`}
+                          onClick={() => {
+                            setSearchQueryFilter('local');
+                            setSearchQueryModel('');
+                          }}
+                          disabled={!enabledProviders.ollama || ollamaAvailableModels.length === 0}
+                          title={!enabledProviders.ollama || ollamaAvailableModels.length === 0 ? 'Enable and connect Ollama first' : ''}
+                        >
+                          Local
+                        </button>
+                      </div>
+                    </div>
+                    <p className="section-description" style={{ marginBottom: '8px' }}>
+                      Generates optimized search terms from user questions.
+                    </p>
+                    <div className="chairman-selection">
+                      <select
+                        value={searchQueryModel}
+                        onChange={(e) => setSearchQueryModel(e.target.value)}
+                        className="model-select"
                       >
-                        ×
-                      </button>
+                        <option value="">Select a model</option>
+                        {renderModelOptions(filterByRemoteLocal(getAllAvailableModels(), searchQueryFilter))}
+                      </select>
                     </div>
-                  );
-                })}
-              </div>
-              <button
-                type="button"
-                className="add-member-button"
-                onClick={handleAddCouncilMember}
-                disabled={getFilteredAvailableModels().length === 0 || councilModels.length >= 8}
-              >
-                + Add Council Member
-              </button>
-              <p className="section-description" style={{ marginTop: '8px', marginBottom: '0' }}>
-                You can add up to 8 council members. With 6 or more members, requests are processed in batches to avoid rate limits.
-              </p>
-              {councilModels.length >= 6 && (
-                <div className="council-size-warning">
-                  ⚠️ <strong>6+ members:</strong> To avoid rate limits, we'll process requests in batches of 3. Max 8 members allowed.
-                </div>
-              )}
-              {councilModels.length >= 8 && (
-                <div className="council-size-info">
-                  ✓ Maximum council size (8 members) reached
-                </div>
-              )}
-            </div>
+                  </div>
+                </section>
+              </>
+            )}
 
-            {/* Chairman */}
-            <div className="subsection" style={{ marginTop: '20px' }}>
-              <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '8px' }}>
-                <h4 style={{ margin: 0 }}>Chairman Model</h4>
-                <div className="model-type-toggle">
-                  <button
-                    type="button"
-                    className={`type-btn ${chairmanFilter === 'remote' ? 'active' : ''}`}
-                    onClick={() => {
-                      setChairmanFilter('remote');
-                      setChairmanModel('');
-                    }}
-                    disabled={!enabledProviders.openrouter && !enabledProviders.direct}
-                    title={!enabledProviders.openrouter && !enabledProviders.direct ? 'Enable OpenRouter or Direct Connections first' : ''}
-                  >
-                    Remote
-                  </button>
-                  <button
-                    type="button"
-                    className={`type-btn ${chairmanFilter === 'local' ? 'active' : ''}`}
-                    onClick={() => {
-                      setChairmanFilter('local');
-                      setChairmanModel('');
-                    }}
-                    disabled={!enabledProviders.ollama || ollamaAvailableModels.length === 0}
-                    title={!enabledProviders.ollama || ollamaAvailableModels.length === 0 ? 'Enable and connect Ollama first' : ''}
-                  >
-                    Local
-                  </button>
-                </div>
-              </div>
-              <div className="chairman-selection">
-                <select
-                  value={chairmanModel}
-                  onChange={(e) => setChairmanModel(e.target.value)}
-                  className="model-select"
-                >
-                  <option value="">Select a model</option>
-                  {renderModelOptions(filterByRemoteLocal(getChairmanModels(), chairmanFilter))}
-                </select>
-              </div>
-            </div>
+            {/* API KEYS */}
+            {activeSection === 'api_keys' && (
+              <section className="settings-section">
+                <h3>API Credentials</h3>
+                <p className="section-description">
+                  Configure keys for LLM providers. 
+                  Keys are <strong>auto-saved</strong> immediately upon successful test.
+                </p>
 
-            {/* Import / Export Configuration */}
-            <div className="subsection" style={{ marginTop: '24px', paddingTop: '20px', borderTop: '1px solid #eee' }}>
-              <h4 style={{ margin: '0 0 4px 0' }}>Import / Export Configuration</h4>
-              <p className="section-description" style={{ marginBottom: '12px' }}>
-                Save your current setup (models, providers, prompts) to a file or load a previous configuration.
-                Useful for switching between different testing scenarios.
-              </p>
-              <div className="council-actions" style={{ display: 'flex', gap: '8px', alignItems: 'center' }}>
-                <input
-                  type="file"
-                  id="import-council"
-                  style={{ display: 'none' }}
-                  accept=".json"
-                  onChange={handleImportCouncil}
-                />
-                <button
-                  className="action-btn"
-                  onClick={() => document.getElementById('import-council').click()}
-                  title="Import Configuration"
-                >
-                  Import
-                </button>
-                <button
-                  className="action-btn"
-                  onClick={handleExportCouncil}
-                  title="Export Configuration"
-                >
-                  Export
-                </button>
-              </div>
-            </div>
-          </section>
-
-          {/* System Prompts Section */}
-          <section className="settings-section">
-            <h3>System Prompts</h3>
-            <p className="section-description">
-              Customize the system instructions for each stage of the council process.
-            </p>
-
-            <div className="prompts-tabs">
-              <button
-                className={`prompt-tab ${activePromptTab === 'search' ? 'active' : ''}`}
-                onClick={() => setActivePromptTab('search')}
-              >
-                Search Query
-              </button>
-              <button
-                className={`prompt-tab ${activePromptTab === 'stage1' ? 'active' : ''}`}
-                onClick={() => setActivePromptTab('stage1')}
-              >
-                Stage 1
-              </button>
-              <button
-                className={`prompt-tab ${activePromptTab === 'stage2' ? 'active' : ''}`}
-                onClick={() => setActivePromptTab('stage2')}
-              >
-                Stage 2
-              </button>
-              <button
-                className={`prompt-tab ${activePromptTab === 'stage3' ? 'active' : ''}`}
-                onClick={() => setActivePromptTab('stage3')}
-              >
-                Stage 3
-              </button>
-            </div>
-
-            <div className="prompt-editor">
-              {activePromptTab === 'search' && (
-                <div className="prompt-content">
-                  <label>Search Query Generation</label>
-                  <p className="section-description" style={{ marginBottom: '10px' }}>
-                    Generates optimized search terms from user questions for web search.
-                  </p>
-                  <p className="prompt-help">Variables: <code>{'{user_query}'}</code></p>
-                  <textarea
-                    value={prompts.search_query_prompt}
-                    onChange={(e) => handlePromptChange('search_query_prompt', e.target.value)}
-                    rows={5}
-                  />
-                  <button className="reset-prompt-btn" onClick={() => handleResetPrompt('search_query_prompt')}>Reset to Default</button>
-                </div>
-              )}
-              {activePromptTab === 'stage1' && (
-                <div className="prompt-content">
-                  <label>Stage 1: Initial Response</label>
-                  <p className="section-description" style={{ marginBottom: '10px' }}>
-                    Guides council members' initial responses to user questions.
-                  </p>
-                  <p className="prompt-help">Variables: <code>{'{user_query}'}</code>, <code>{'{search_context_block}'}</code></p>
-                  <textarea
-                    value={prompts.stage1_prompt}
-                    onChange={(e) => handlePromptChange('stage1_prompt', e.target.value)}
-                    rows={10}
-                  />
-                  <button className="reset-prompt-btn" onClick={() => handleResetPrompt('stage1_prompt')}>Reset to Default</button>
-                </div>
-              )}
-              {activePromptTab === 'stage2' && (
-                <div className="prompt-content">
-                  <label>Stage 2: Peer Ranking</label>
-                  <p className="section-description" style={{ marginBottom: '10px' }}>
-                    Instructs models how to rank and evaluate peer responses.
-                  </p>
-                  <p className="prompt-help">Variables: <code>{'{user_query}'}</code>, <code>{'{responses_text}'}</code>, <code>{'{search_context_block}'}</code></p>
-                  <textarea
-                    value={prompts.stage2_prompt}
-                    onChange={(e) => handlePromptChange('stage2_prompt', e.target.value)}
-                    rows={10}
-                  />
-                  <button className="reset-prompt-btn" onClick={() => handleResetPrompt('stage2_prompt')}>Reset to Default</button>
-                </div>
-              )}
-              {activePromptTab === 'stage3' && (
-                <div className="prompt-content">
-                  <label>Stage 3: Chairman Synthesis</label>
-                  <p className="section-description" style={{ marginBottom: '10px' }}>
-                    Directs the chairman to synthesize a final answer from all inputs.
-                  </p>
-                  <p className="prompt-help">Variables: <code>{'{user_query}'}</code>, <code>{'{stage1_text}'}</code>, <code>{'{stage2_text}'}</code>, <code>{'{search_context_block}'}</code></p>
-                  <textarea
-                    value={prompts.stage3_prompt}
-                    onChange={(e) => handlePromptChange('stage3_prompt', e.target.value)}
-                    rows={10}
-                  />
-                  <button className="reset-prompt-btn" onClick={() => handleResetPrompt('stage3_prompt')}>Reset to Default</button>
-                </div>
-              )}
-            </div>
-          </section>
-
-          {/* Web Search Config */}
-          <section className="settings-section">
-            <h3>Web Search Provider</h3>
-            <div className="provider-options">
-              {SEARCH_PROVIDERS.map(provider => (
-                <div key={provider.id} className={`provider-option-container ${selectedSearchProvider === provider.id ? 'selected' : ''}`}>
-                  <label
-                    className="provider-option"
-                  >
+                {/* OpenRouter */}
+                <div className="api-key-section">
+                  <label>OpenRouter API Key</label>
+                  <div className="api-key-input-row">
                     <input
-                      type="radio"
-                      name="search_provider"
-                      value={provider.id}
-                      checked={selectedSearchProvider === provider.id}
-                      onChange={() => setSelectedSearchProvider(provider.id)}
+                      type="password"
+                      placeholder={settings?.openrouter_api_key_set ? '••••••••••••••••' : 'Enter API key'}
+                      value={openrouterApiKey}
+                      onChange={(e) => {
+                        setOpenrouterApiKey(e.target.value);
+                        setOpenrouterTestResult(null);
+                      }}
+                      className={settings?.openrouter_api_key_set && !openrouterApiKey ? 'key-configured' : ''}
                     />
-                    <div className="provider-info">
-                      <span className="provider-name">{provider.name}</span>
-                      <span className="provider-description">{provider.description}</span>
-                    </div>
-                  </label>
-
-                  {/* Inline API Key Input for Tavily */}
-                  {selectedSearchProvider === 'tavily' && provider.id === 'tavily' && (
-                    <div className="inline-api-key-section">
-                      <div className="api-key-input-row">
-                        <input
-                          type="password"
-                          placeholder={settings.tavily_api_key_set ? '••••••••••••••••' : 'Enter Tavily API key'}
-                          value={tavilyApiKey}
-                          onChange={e => {
-                            setTavilyApiKey(e.target.value);
-                            setTavilyTestResult(null);
-                          }}
-                          className={settings.tavily_api_key_set && !tavilyApiKey ? 'key-configured' : ''}
-                        />
-                        <button
-                          type="button"
-                          className="test-button"
-                          onClick={handleTestTavily}
-                          disabled={isTestingTavily || (!tavilyApiKey && !settings.tavily_api_key_set)}
-                        >
-                          {isTestingTavily ? 'Testing...' : (settings.tavily_api_key_set && !tavilyApiKey ? 'Retest' : 'Test')}
-                        </button>
-                      </div>
-                      {settings.tavily_api_key_set && !tavilyApiKey && (
-                        <div className="key-status set">✓ API key configured</div>
-                      )}
-                      {tavilyTestResult && (
-                        <div className={`test-result ${tavilyTestResult.success ? 'success' : 'error'}`}>
-                          {tavilyTestResult.success ? '✓' : '✗'} {tavilyTestResult.message}
-                        </div>
-                      )}
+                    <button
+                      className="test-button"
+                      onClick={handleTestOpenRouter}
+                      disabled={!openrouterApiKey && !settings?.openrouter_api_key_set || isTestingOpenRouter}
+                    >
+                      {isTestingOpenRouter ? 'Testing...' : (settings?.openrouter_api_key_set && !openrouterApiKey ? 'Retest' : 'Test')}
+                    </button>
+                  </div>
+                  {settings?.openrouter_api_key_set && !openrouterApiKey && (
+                    <div className="key-status set">✓ API key configured</div>
+                  )}
+                  {openrouterTestResult && (
+                    <div className={`test-result ${openrouterTestResult.success ? 'success' : 'error'}`}>
+                      {openrouterTestResult.message}
                     </div>
                   )}
+                  <p className="api-key-hint">
+                    Get key at <a href="https://openrouter.ai/keys" target="_blank" rel="noopener noreferrer">openrouter.ai</a>
+                  </p>
+                </div>
 
-                  {/* Inline API Key Input for Brave */}
-                  {selectedSearchProvider === 'brave' && provider.id === 'brave' && (
-                    <div className="inline-api-key-section">
+                {/* Ollama */}
+                <div className="api-key-section">
+                  <label>Ollama Base URL</label>
+                  <div className="api-key-input-row">
+                    <input
+                      type="text"
+                      placeholder="http://localhost:11434"
+                      value={ollamaBaseUrl}
+                      onChange={(e) => {
+                        setOllamaBaseUrl(e.target.value);
+                        setOllamaTestResult(null);
+                      }}
+                    />
+                    <button
+                      className="test-button"
+                      onClick={handleTestOllama}
+                      disabled={!ollamaBaseUrl || isTestingOllama}
+                    >
+                      {isTestingOllama ? 'Testing...' : 'Connect'}
+                    </button>
+                  </div>
+                  {ollamaTestResult && (
+                    <div className={`test-result ${ollamaTestResult.success ? 'success' : 'error'}`}>
+                      {ollamaTestResult.message}
+                    </div>
+                  )}
+                  {ollamaStatus && ollamaStatus.connected && (
+                    <div className="ollama-auto-status connected">
+                      <span className="status-indicator connected">●</span>
+                      <span className="status-text">
+                        <strong>Connected</strong> <span className="status-separator">·</span> <span className="status-time">Last: {new Date(ollamaStatus.lastConnected).toLocaleTimeString()}</span>
+                      </span>
+                    </div>
+                  )}
+                  {ollamaStatus && !ollamaStatus.connected && !ollamaStatus.testing && (
+                    <div className="ollama-auto-status">
+                      <span className="status-indicator disconnected">●</span>
+                      <span className="status-text">Not connected</span>
+                    </div>
+                  )}
+                  <div className="model-options-row" style={{ marginTop: '12px' }}>
+                    <button
+                      type="button"
+                      className="reset-defaults-button"
+                      onClick={() => loadOllamaModels(ollamaBaseUrl)}
+                    >
+                      Refresh Local Models
+                    </button>
+                  </div>
+                </div>
+
+                {/* Direct LLM API Connections */}
+                <div className="subsection" style={{ marginTop: '24px' }}>
+                  <h4>Direct LLM Connections</h4>
+                  {DIRECT_PROVIDERS.map(dp => (
+                    <div key={dp.id} className="api-key-section">
+                      <label>{dp.name} API Key</label>
                       <div className="api-key-input-row">
                         <input
                           type="password"
-                          placeholder={settings.brave_api_key_set ? '••••••••••••••••' : 'Enter Brave API key'}
-                          value={braveApiKey}
-                          onChange={e => {
-                            setBraveApiKey(e.target.value);
-                            setBraveTestResult(null);
-                          }}
-                          className={settings.brave_api_key_set && !braveApiKey ? 'key-configured' : ''}
+                          placeholder={settings?.[`${dp.key}_set`] ? '••••••••••••••••' : 'Enter API key'}
+                          value={directKeys[dp.key]}
+                          onChange={e => setDirectKeys(prev => ({ ...prev, [dp.key]: e.target.value }))}
+                          className={settings?.[`${dp.key}_set`] && !directKeys[dp.key] ? 'key-configured' : ''}
                         />
                         <button
-                          type="button"
                           className="test-button"
-                          onClick={handleTestBrave}
-                          disabled={isTestingBrave || (!braveApiKey && !settings.brave_api_key_set)}
+                          onClick={() => handleTestDirectKey(dp.id, dp.key)}
+                          disabled={(!directKeys[dp.key] && !settings?.[`${dp.key}_set`]) || validatingKeys[dp.id]}
                         >
-                          {isTestingBrave ? 'Testing...' : (settings.brave_api_key_set && !braveApiKey ? 'Retest' : 'Test')}
+                          {validatingKeys[dp.id] ? 'Testing...' : (settings?.[`${dp.key}_set`] && !directKeys[dp.key] ? 'Retest' : 'Test')}
                         </button>
                       </div>
-                      {settings.brave_api_key_set && !braveApiKey && (
+                      {settings?.[`${dp.key}_set`] && !directKeys[dp.key] && (
                         <div className="key-status set">✓ API key configured</div>
                       )}
-                      {braveTestResult && (
-                        <div className={`test-result ${braveTestResult.success ? 'success' : 'error'}`}>
-                          {braveTestResult.success ? '✓' : '✗'} {braveTestResult.message}
+                      {keyValidationStatus[dp.id] && (
+                        <div className={`test-result ${keyValidationStatus[dp.id].success ? 'success' : 'error'}`}>
+                          {keyValidationStatus[dp.id].message}
                         </div>
                       )}
+                    </div>
+                  ))}
+                </div>
+              </section>
+            )}
+
+            {/* SYSTEM PROMPTS */}
+            {activeSection === 'prompts' && (
+              <section className="settings-section">
+                <h3>System Prompts</h3>
+                <p className="section-description">
+                  Customize the instructions given to the models at each stage.
+                </p>
+
+                <div className="prompts-tabs">
+                  <button
+                    className={`prompt-tab ${activePromptTab === 'stage1' ? 'active' : ''}`}
+                    onClick={() => setActivePromptTab('stage1')}
+                  >
+                    Stage 1
+                  </button>
+                  <button
+                    className={`prompt-tab ${activePromptTab === 'stage2' ? 'active' : ''}`}
+                    onClick={() => setActivePromptTab('stage2')}
+                  >
+                    Stage 2
+                  </button>
+                  <button
+                    className={`prompt-tab ${activePromptTab === 'stage3' ? 'active' : ''}`}
+                    onClick={() => setActivePromptTab('stage3')}
+                  >
+                    Stage 3
+                  </button>
+                  <button
+                    className={`prompt-tab ${activePromptTab === 'search' ? 'active' : ''}`}
+                    onClick={() => setActivePromptTab('search')}
+                  >
+                    Search Query
+                  </button>
+                </div>
+
+                <div className="prompt-editor">
+                  {activePromptTab === 'search' && (
+                    <div className="prompt-content">
+                      <label>Search Query Generation</label>
+                      <p className="section-description" style={{ marginBottom: '10px' }}>
+                        Generates optimized search terms from user questions for web search.
+                      </p>
+                      <p className="prompt-help">Variables: <code>{'{user_query}'}</code></p>
+                      <textarea
+                        value={prompts.search_query_prompt}
+                        onChange={(e) => handlePromptChange('search_query_prompt', e.target.value)}
+                        rows={10}
+                      />
+                      <button className="reset-prompt-btn" onClick={() => handleResetPrompt('search_query_prompt')}>Reset to Default</button>
+                    </div>
+                  )}
+                  {activePromptTab === 'stage1' && (
+                    <div className="prompt-content">
+                      <label>Stage 1: Initial Response</label>
+                      <p className="section-description" style={{ marginBottom: '10px' }}>
+                        Guides council members' initial responses to user questions.
+                      </p>
+                      <p className="prompt-help">Variables: <code>{'{user_query}'}</code>, <code>{'{search_context_block}'}</code></p>
+                      <textarea
+                        value={prompts.stage1_prompt}
+                        onChange={(e) => handlePromptChange('stage1_prompt', e.target.value)}
+                        rows={15}
+                      />
+                      <button className="reset-prompt-btn" onClick={() => handleResetPrompt('stage1_prompt')}>Reset to Default</button>
+                    </div>
+                  )}
+                  {activePromptTab === 'stage2' && (
+                    <div className="prompt-content">
+                      <label>Stage 2: Peer Ranking</label>
+                      <p className="section-description" style={{ marginBottom: '10px' }}>
+                        Instructs models how to rank and evaluate peer responses.
+                      </p>
+                      <p className="prompt-help">Variables: <code>{'{user_query}'}</code>, <code>{'{responses_text}'}</code>, <code>{'{search_context_block}'}</code></p>
+                      <textarea
+                        value={prompts.stage2_prompt}
+                        onChange={(e) => handlePromptChange('stage2_prompt', e.target.value)}
+                        rows={15}
+                      />
+                      <button className="reset-prompt-btn" onClick={() => handleResetPrompt('stage2_prompt')}>Reset to Default</button>
+                    </div>
+                  )}
+                  {activePromptTab === 'stage3' && (
+                    <div className="prompt-content">
+                      <label>Stage 3: Chairman Synthesis</label>
+                      <p className="section-description" style={{ marginBottom: '10px' }}>
+                        Directs the chairman to synthesize a final answer from all inputs.
+                      </p>
+                      <p className="prompt-help">Variables: <code>{'{user_query}'}</code>, <code>{'{stage1_text}'}</code>, <code>{'{stage2_text}'}</code>, <code>{'{search_context_block}'}</code></p>
+                      <textarea
+                        value={prompts.stage3_prompt}
+                        onChange={(e) => handlePromptChange('stage3_prompt', e.target.value)}
+                        rows={15}
+                      />
+                      <button className="reset-prompt-btn" onClick={() => handleResetPrompt('stage3_prompt')}>Reset to Default</button>
                     </div>
                   )}
                 </div>
-              ))}
-            </div>
+              </section>
+            )}
 
-            <div className="full-content-section">
-              <label>Full Article Fetch (Jina AI)</label>
-              <p className="setting-description">
-                Uses Jina AI to read the full text of the top search results. This gives the Council deeper context than just search snippets. Applies to all search providers. <strong>Set to 0 to disable.</strong>
-              </p>
-              <div className="full-content-input-row">
-                <input
-                  type="range"
-                  min="0"
-                  max="5"
-                  value={fullContentResults}
-                  onChange={e => setFullContentResults(parseInt(e.target.value, 10))}
-                  className="full-content-slider"
-                />
-                <span className="full-content-value">{fullContentResults} results</span>
-              </div>
-            </div>
-          </section>
+            {/* GENERAL & SEARCH */}
+            {activeSection === 'general' && (
+              <section className="settings-section">
+                <h3>Web Search Provider</h3>
+                <div className="provider-options">
+                  {SEARCH_PROVIDERS.map(provider => (
+                    <div key={provider.id} className={`provider-option-container ${selectedSearchProvider === provider.id ? 'selected' : ''}`}>
+                      <label className="provider-option">
+                        <input
+                          type="radio"
+                          name="search_provider"
+                          value={provider.id}
+                          checked={selectedSearchProvider === provider.id}
+                          onChange={() => setSelectedSearchProvider(provider.id)}
+                        />
+                        <div className="provider-info">
+                          <span className="provider-name">{provider.name}</span>
+                          <span className="provider-description">{provider.description}</span>
+                        </div>
+                      </label>
 
+                      {/* Inline API Key Input for Tavily */}
+                      {selectedSearchProvider === 'tavily' && provider.id === 'tavily' && (
+                        <div className="inline-api-key-section">
+                          <div className="api-key-input-row">
+                            <input
+                              type="password"
+                              placeholder={settings.tavily_api_key_set ? '••••••••••••••••' : 'Enter Tavily API key'}
+                              value={tavilyApiKey}
+                              onChange={e => {
+                                setTavilyApiKey(e.target.value);
+                                setTavilyTestResult(null);
+                              }}
+                              className={settings.tavily_api_key_set && !tavilyApiKey ? 'key-configured' : ''}
+                            />
+                            <button
+                              type="button"
+                              className="test-button"
+                              onClick={handleTestTavily}
+                              disabled={isTestingTavily || (!tavilyApiKey && !settings.tavily_api_key_set)}
+                            >
+                              {isTestingTavily ? 'Testing...' : (settings.tavily_api_key_set && !tavilyApiKey ? 'Retest' : 'Test')}
+                            </button>
+                          </div>
+                          {settings.tavily_api_key_set && !tavilyApiKey && (
+                            <div className="key-status set">✓ API key configured</div>
+                          )}
+                          {tavilyTestResult && (
+                            <div className={`test-result ${tavilyTestResult.success ? 'success' : 'error'}`}>
+                              {tavilyTestResult.success ? '✓' : '✗'} {tavilyTestResult.message}
+                            </div>
+                          )}
+                        </div>
+                      )}
+
+                      {/* Inline API Key Input for Brave */}
+                      {selectedSearchProvider === 'brave' && provider.id === 'brave' && (
+                        <div className="inline-api-key-section">
+                          <div className="api-key-input-row">
+                            <input
+                              type="password"
+                              placeholder={settings.brave_api_key_set ? '••••••••••••••••' : 'Enter Brave API key'}
+                              value={braveApiKey}
+                              onChange={e => {
+                                setBraveApiKey(e.target.value);
+                                setBraveTestResult(null);
+                              }}
+                              className={settings.brave_api_key_set && !braveApiKey ? 'key-configured' : ''}
+                            />
+                            <button
+                              type="button"
+                              className="test-button"
+                              onClick={handleTestBrave}
+                              disabled={isTestingBrave || (!braveApiKey && !settings.brave_api_key_set)}
+                            >
+                              {isTestingBrave ? 'Testing...' : (settings.brave_api_key_set && !braveApiKey ? 'Retest' : 'Test')}
+                            </button>
+                          </div>
+                          {settings.brave_api_key_set && !braveApiKey && (
+                            <div className="key-status set">✓ API key configured</div>
+                          )}
+                          {braveTestResult && (
+                            <div className={`test-result ${braveTestResult.success ? 'success' : 'error'}`}>
+                              {braveTestResult.success ? '✓' : '✗'} {braveTestResult.message}
+                            </div>
+                          )}
+                        </div>
+                      )}
+                    </div>
+                  ))}
+                </div>
+
+                <div className="full-content-section">
+                  <label>Full Article Fetch (Jina AI)</label>
+                  <p className="setting-description">
+                    Uses Jina AI to read the full text of the top search results.
+                    <strong> Set to 0 to disable.</strong>
+                  </p>
+                  <div className="full-content-input-row">
+                    <input
+                      type="range"
+                      min="0"
+                      max="5"
+                      value={fullContentResults}
+                      onChange={e => setFullContentResults(parseInt(e.target.value, 10))}
+                      className="full-content-slider"
+                    />
+                    <span className="full-content-value">{fullContentResults} results</span>
+                  </div>
+                </div>
+
+                {/* Import / Export */}
+                <div className="subsection" style={{ marginTop: '32px', paddingTop: '20px', borderTop: '1px solid #eee' }}>
+                  <h4 style={{ margin: '0 0 4px 0' }}>Backup & Restore</h4>
+                  <p className="section-description" style={{ marginBottom: '12px' }}>
+                    Save your council configuration (models, prompts, settings) to a JSON file.
+                    <br/><em>Note: API keys are NOT exported for security.</em>
+                  </p>
+                  <div className="council-actions" style={{ display: 'flex', gap: '8px', alignItems: 'center' }}>
+                    <input
+                      type="file"
+                      id="import-council"
+                      style={{ display: 'none' }}
+                      accept=".json"
+                      onChange={handleImportCouncil}
+                    />
+                    <button
+                      className="action-btn"
+                      onClick={() => document.getElementById('import-council').click()}
+                      title="Import Configuration"
+                    >
+                      Import Config
+                    </button>
+                    <button
+                      className="action-btn"
+                      onClick={handleExportCouncil}
+                      title="Export Configuration"
+                    >
+                      Export Config
+                    </button>
+                  </div>
+                </div>
+              </section>
+            )}
+
+          </div>
         </div>
 
         <div className="settings-footer">
@@ -1503,18 +1531,19 @@ export default function Settings({ onClose, ollamaStatus, onRefreshOllama }) {
           </button>
           <div className="footer-actions">
             <button className="cancel-button" onClick={onClose}>
-              Cancel
+              Close
             </button>
             <button
               className="save-button"
               onClick={handleSave}
               disabled={isSaving || !hasChanges}
             >
-              {isSaving ? 'Saving...' : (success ? 'Saved!' : 'Save')}
+              {isSaving ? 'Saving...' : (success ? 'Saved!' : 'Save Changes')}
             </button>
           </div>
         </div>
-      </div >
+      </div>
+      
       {showResetConfirm && (
         <div className="settings-overlay confirmation-overlay" onClick={() => setShowResetConfirm(false)}>
           <div className="settings-modal confirmation-modal" onClick={e => e.stopPropagation()}>
@@ -1541,8 +1570,7 @@ export default function Settings({ onClose, ollamaStatus, onRefreshOllama }) {
             </div>
           </div>
         </div>
-      )
-      }
-    </div >
+      )}
+    </div>
   );
 }

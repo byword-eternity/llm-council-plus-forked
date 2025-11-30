@@ -18,7 +18,7 @@ DEFAULT_COUNCIL_MODELS = [
     "x-ai/grok-4",
 ]
 DEFAULT_CHAIRMAN_MODEL = "google/gemini-3-pro-preview"
-DEFAULT_SEARCH_QUERY_MODEL = "google/gemini-2.0-flash-lite"
+DEFAULT_SEARCH_QUERY_MODEL = "google/gemini-2.0-flash-001"
 
 # Default enabled providers
 DEFAULT_ENABLED_PROVIDERS = {
