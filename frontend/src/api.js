@@ -244,13 +244,16 @@ export const api = {
   /**
    * Send a message and receive streaming updates.
    * @param {string} conversationId - The conversation ID
-   * @param {string} content - The message content
-   * @param {boolean} webSearch - Whether to use web search
+   * @param {Object} options - Message options
+   * @param {string} options.content - The message content
+   * @param {boolean} options.webSearch - Whether to use web search
+   * @param {string} options.executionMode - Execution mode: 'chat_only', 'chat_ranking', or 'full'
    * @param {function} onEvent - Callback function for each event: (eventType, data) => void
    * @param {AbortSignal} signal - Optional AbortSignal to cancel the request
    * @returns {Promise<void>}
    */
-  async sendMessageStream(conversationId, content, webSearch, onEvent, signal) {
+  async sendMessageStream(conversationId, options, onEvent, signal) {
+    const { content, webSearch = false, executionMode = 'full' } = options;
     const response = await fetch(
       `${API_BASE}/api/conversations/${conversationId}/message/stream`,
       {
@@ -258,7 +261,7 @@ export const api = {
         headers: {
           'Content-Type': 'application/json',
         },
-        body: JSON.stringify({ content, web_search: webSearch }),
+        body: JSON.stringify({ content, web_search: webSearch, execution_mode: executionMode }),
         signal,
       }
     );

@@ -241,26 +241,7 @@
   z-index: 50;
 }
 
-.input-container {
-  background: rgba(30, 41, 59, 0.95);
-  /* MUCH more opaque for visibility */
-  backdrop-filter: blur(20px);
-  -webkit-backdrop-filter: blur(20px);
-  border: 2px solid rgba(59, 130, 246, 0.5);
-  /* Stronger blue border */
-  border-radius: 24px;
-  padding: 14px 20px;
-  box-shadow:
-    0 0 0 1px rgba(59, 130, 246, 0.2),
-    0 10px 40px rgba(0, 0, 0, 0.5),
-    0 0 25px rgba(59, 130, 246, 0.2);
-  display: flex;
-  align-items: flex-end;
-  gap: 12px;
-  transition: all 0.2s ease;
-  width: 100%;
-  box-sizing: border-box;
-}
+/* Legacy input-container removed */
 
 .input-container:focus-within {
   background: rgba(30, 41, 59, 1);
@@ -438,6 +419,42 @@
 }
 
 /* Stage Loading Indicators */
+.input-container {
+  display: flex;
+  flex-direction: column;
+  align-items: stretch;
+  /* Ensure children take full width */
+  gap: 10px;
+  padding: 20px;
+  background: rgba(20, 20, 35, 0.95);
+  backdrop-filter: blur(20px);
+  border-top: 1px solid rgba(255, 255, 255, 0.1);
+  box-shadow: 0 -4px 24px rgba(0, 0, 0, 0.3);
+  border-radius: 24px;
+  /* Restore border radius */
+}
+
+.input-row-top {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+}
+
+.input-row-top .message-input {
+  flex: 1;
+}
+
+.input-row-bottom {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 12px;
+}
+
+.input-row-bottom .execution-mode-toggle {
+  max-width: fit-content;
+}
+
 .stage-loading {
   display: flex;
   align-items: center;

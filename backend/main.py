@@ -36,6 +36,7 @@ class SendMessageRequest(BaseModel):
     """Request to send a message in a conversation."""
     content: str
     web_search: bool = False
+    execution_mode: str = "full"  # 'chat_only', 'chat_ranking', 'full'
 
 
 class ConversationMetadata(BaseModel):
@@ -94,10 +95,15 @@ async def delete_conversation(conversation_id: str):
 
 @app.post("/api/conversations/{conversation_id}/message/stream")
 async def send_message_stream(conversation_id: str, body: SendMessageRequest, request: Request):
-    """
-    Send a message and stream the 3-stage council process.
-    Returns Server-Sent Events as each stage completes.
-    """
+    """Send a message and stream the 3-stage council process."""
+    # Validate execution_mode
+    valid_modes = ["chat_only", "chat_ranking", "full"]
+    if body.execution_mode not in valid_modes:
+        raise HTTPException(
+            status_code=400,
+            detail=f"Invalid execution_mode. Must be one of: {valid_modes}"
+        )
+    
     # Check if conversation exists
     conversation = storage.get_conversation(conversation_id)
     if conversation is None:
@@ -188,42 +194,44 @@ async def send_message_stream(conversation_id: str, body: SendMessageRequest, re
                 yield f"data: {json.dumps({'type': 'error', 'message': error_msg})}\n\n"
                 return # Stop further processing
 
-            # Stage 2: Collect rankings
-            yield f"data: {json.dumps({'type': 'stage2_start'})}\n\n"
-            await asyncio.sleep(0.05)
-            
-            # Iterate over the async generator
-            async for item in stage2_collect_rankings(body.content, stage1_results, search_context, request):
-                # First item is the label mapping
-                if isinstance(item, dict) and not item.get('model'):
-                    label_to_model = item
-                    # Send init event with total count
-                    yield f"data: {json.dumps({'type': 'stage2_init', 'total': len(label_to_model)})}\n\n"
-                    continue
+            # Stage 2: Only if mode is 'chat_ranking' or 'full'
+            if body.execution_mode in ["chat_ranking", "full"]:
+                yield f"data: {json.dumps({'type': 'stage2_start'})}\n\n"
+                await asyncio.sleep(0.05)
                 
-                # Subsequent items are results
-                stage2_results.append(item)
-                
-                # Send progress update
-                print(f"Stage 2 Progress: {len(stage2_results)}/{len(label_to_model)} - {item['model']}")
-                yield f"data: {json.dumps({'type': 'stage2_progress', 'data': item, 'count': len(stage2_results), 'total': len(label_to_model)})}\n\n"
-                await asyncio.sleep(0.01)
+                # Iterate over the async generator
+                async for item in stage2_collect_rankings(body.content, stage1_results, search_context, request):
+                    # First item is the label mapping
+                    if isinstance(item, dict) and not item.get('model'):
+                        label_to_model = item
+                        # Send init event with total count
+                        yield f"data: {json.dumps({'type': 'stage2_init', 'total': len(label_to_model)})}\n\n"
+                        continue
+                    
+                    # Subsequent items are results
+                    stage2_results.append(item)
+                    
+                    # Send progress update
+                    print(f"Stage 2 Progress: {len(stage2_results)}/{len(label_to_model)} - {item['model']}")
+                    yield f"data: {json.dumps({'type': 'stage2_progress', 'data': item, 'count': len(stage2_results), 'total': len(label_to_model)})}\n\n"
+                    await asyncio.sleep(0.01)
 
-            aggregate_rankings = calculate_aggregate_rankings(stage2_results, label_to_model)
-            yield f"data: {json.dumps({'type': 'stage2_complete', 'data': stage2_results, 'metadata': {'label_to_model': label_to_model, 'aggregate_rankings': aggregate_rankings, 'search_query': search_query, 'search_context': search_context}})}\n\n"
-            await asyncio.sleep(0.05)
+                aggregate_rankings = calculate_aggregate_rankings(stage2_results, label_to_model)
+                yield f"data: {json.dumps({'type': 'stage2_complete', 'data': stage2_results, 'metadata': {'label_to_model': label_to_model, 'aggregate_rankings': aggregate_rankings, 'search_query': search_query, 'search_context': search_context}})}\n\n"
+                await asyncio.sleep(0.05)
 
-            # Stage 3: Synthesize final answer
-            yield f"data: {json.dumps({'type': 'stage3_start'})}\n\n"
-            await asyncio.sleep(0.05)
+            # Stage 3: Only if mode is 'full'
+            if body.execution_mode == "full":
+                yield f"data: {json.dumps({'type': 'stage3_start'})}\n\n"
+                await asyncio.sleep(0.05)
 
-            # Check for disconnect before starting Stage 3
-            if await request.is_disconnected():
-                print("Client disconnected before Stage 3")
-                raise asyncio.CancelledError("Client disconnected")
+                # Check for disconnect before starting Stage 3
+                if await request.is_disconnected():
+                    print("Client disconnected before Stage 3")
+                    raise asyncio.CancelledError("Client disconnected")
 
-            stage3_result = await stage3_synthesize_final(body.content, stage1_results, stage2_results, search_context)
-            yield f"data: {json.dumps({'type': 'stage3_complete', 'data': stage3_result})}\n\n"
+                stage3_result = await stage3_synthesize_final(body.content, stage1_results, stage2_results, search_context)
+                yield f"data: {json.dumps({'type': 'stage3_complete', 'data': stage3_result})}\n\n"
 
             # Wait for title generation if it was started
             if title_task:
@@ -236,18 +244,24 @@ async def send_message_stream(conversation_id: str, body: SendMessageRequest, re
 
             # Save complete assistant message with metadata
             metadata = {
-                "label_to_model": label_to_model,
-                "aggregate_rankings": aggregate_rankings,
-                "search_context": search_context,
+                "execution_mode": body.execution_mode,  # Save mode for historical context
             }
+            
+            # Only include stage2/stage3 metadata if they were executed
+            if body.execution_mode in ["chat_ranking", "full"]:
+                metadata["label_to_model"] = label_to_model
+                metadata["aggregate_rankings"] = aggregate_rankings
+            
+            if search_context:
+                metadata["search_context"] = search_context
             if search_query:
                 metadata["search_query"] = search_query
 
             storage.add_assistant_message(
                 conversation_id,
                 stage1_results,
-                stage2_results,
-                stage3_result,
+                stage2_results if body.execution_mode in ["chat_ranking", "full"] else None,
+                stage3_result if body.execution_mode == "full" else None,
                 metadata
             )
 
@@ -310,6 +324,9 @@ class UpdateSettingsRequest(BaseModel):
 
     # Web Search Query Generator
     search_query_model: Optional[str] = None
+    
+    # Execution Mode
+    execution_mode: Optional[str] = None
 
     # System Prompts
     stage1_prompt: Optional[str] = None
@@ -482,6 +499,16 @@ async def update_app_settings(request: UpdateSettingsRequest):
     # Web Search Query Generator
     if request.search_query_model is not None:
         updates["search_query_model"] = request.search_query_model
+    
+    # Execution Mode
+    if request.execution_mode is not None:
+        valid_modes = ["chat_only", "chat_ranking", "full"]
+        if request.execution_mode not in valid_modes:
+            raise HTTPException(
+                status_code=400,
+                detail=f"Invalid execution_mode. Must be one of: {valid_modes}"
+            )
+        updates["execution_mode"] = request.execution_mode
 
     if updates:
         settings = update_settings(**updates)

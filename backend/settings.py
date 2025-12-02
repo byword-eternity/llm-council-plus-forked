@@ -116,6 +116,9 @@ class Settings(BaseModel):
     stage3_prompt: str = STAGE3_PROMPT_DEFAULT
 
     search_query_prompt: str = SEARCH_QUERY_PROMPT_DEFAULT
+    
+    # Execution Mode
+    execution_mode: str = "full"  # Default execution mode: 'chat_only', 'chat_ranking', 'full'
 
 
 def get_settings() -> Settings:

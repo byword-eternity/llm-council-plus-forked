@@ -20,8 +20,10 @@ function App() {
   const [councilConfigured, setCouncilConfigured] = useState(true); // Assume configured until checked
   const [councilModels, setCouncilModels] = useState([]);
   const [chairmanModel, setChairmanModel] = useState(null);
+  const [executionMode, setExecutionMode] = useState('full');
   const abortControllerRef = useRef(null);
   const requestIdRef = useRef(0);
+  const isInitialMount = useRef(true);
 
   // Check initial configuration on mount
   useEffect(() => {
@@ -32,6 +34,9 @@ function App() {
     try {
       // 1. Get Settings to check for API keys
       const settings = await api.getSettings();
+
+      // Load execution mode preference
+      setExecutionMode(settings.execution_mode || 'full');
 
       const hasApiKey = settings.openrouter_api_key_set ||
         settings.groq_api_key_set ||
@@ -114,6 +119,25 @@ function App() {
   useEffect(() => {
     loadConversations();
   }, []);
+
+  // Auto-save execution mode preference when changed
+  useEffect(() => {
+    // Skip saving on initial mount
+    if (isInitialMount.current) {
+      isInitialMount.current = false;
+      return;
+    }
+
+    const saveExecutionMode = async () => {
+      try {
+        await api.updateSettings({ execution_mode: executionMode });
+      } catch (error) {
+        console.error('Failed to save execution mode:', error);
+      }
+    };
+
+    saveExecutionMode();
+  }, [executionMode]);
 
   const testOllamaConnection = async (customUrl = null) => {
     try {
@@ -266,310 +290,313 @@ function App() {
       }));
 
       // Send message with streaming
-      await api.sendMessageStream(currentConversationId, content, webSearch, (eventType, event) => {
-        switch (eventType) {
-          case 'search_start':
-            setCurrentConversation((prev) => {
-              const messages = [...prev.messages];
-              const lastMsg = messages[messages.length - 1];
+      await api.sendMessageStream(
+        currentConversationId,
+        { content, webSearch, executionMode },
+        (eventType, event) => {
+          switch (eventType) {
+            case 'search_start':
+              setCurrentConversation((prev) => {
+                const messages = [...prev.messages];
+                const lastMsg = messages[messages.length - 1];
 
-              const updatedLastMsg = {
-                ...lastMsg,
-                loading: {
-                  ...lastMsg.loading,
-                  search: true
-                }
-              };
-
-              messages[messages.length - 1] = updatedLastMsg;
-              return { ...prev, messages };
-            });
-            break;
-
-          case 'search_complete':
-            setCurrentConversation((prev) => {
-              const messages = [...prev.messages];
-              const lastMsg = messages[messages.length - 1];
-
-              const updatedLastMsg = {
-                ...lastMsg,
-                loading: {
-                  ...lastMsg.loading,
-                  search: false
-                },
-                metadata: {
-                  ...lastMsg.metadata,
-                  search_query: event.data.search_query,
-                  search_context: event.data.search_context,
-                }
-              };
-
-              messages[messages.length - 1] = updatedLastMsg;
-              return { ...prev, messages };
-            });
-            break;
-
-          case 'stage1_start':
-            setCurrentConversation((prev) => {
-              const messages = [...prev.messages];
-              const lastMsg = messages[messages.length - 1];
-
-              const updatedLastMsg = {
-                ...lastMsg,
-                loading: {
-                  ...lastMsg.loading,
-                  stage1: true
-                },
-                timers: {
-                  ...lastMsg.timers,
-                  stage1Start: Date.now()
-                }
-              };
-
-              messages[messages.length - 1] = updatedLastMsg;
-              return { ...prev, messages };
-            });
-            break;
-
-          case 'stage1_init':
-            console.log('DEBUG: Received stage1_init', event);
-            setCurrentConversation((prev) => {
-              const messages = [...prev.messages];
-              const lastMsg = messages[messages.length - 1];
-
-              const updatedLastMsg = {
-                ...lastMsg,
-                progress: {
-                  ...lastMsg.progress,
-                  stage1: {
-                    count: 0,
-                    total: event.total,
-                    currentModel: null
+                const updatedLastMsg = {
+                  ...lastMsg,
+                  loading: {
+                    ...lastMsg.loading,
+                    search: true
                   }
-                }
-              };
+                };
 
-              messages[messages.length - 1] = updatedLastMsg;
-              return { ...prev, messages };
-            });
-            break;
+                messages[messages.length - 1] = updatedLastMsg;
+                return { ...prev, messages };
+              });
+              break;
 
-          case 'stage1_progress':
-            setCurrentConversation((prev) => {
-              const messages = [...prev.messages];
-              const lastMsg = messages[messages.length - 1];
+            case 'search_complete':
+              setCurrentConversation((prev) => {
+                const messages = [...prev.messages];
+                const lastMsg = messages[messages.length - 1];
 
-              // Immutable update for stage1
-              const updatedStage1 = lastMsg.stage1 ? [...lastMsg.stage1, event.data] : [event.data];
-              const updatedLastMsg = {
-                ...lastMsg,
-                progress: {
-                  ...lastMsg.progress,
-                  stage1: {
-                    count: event.count,
-                    total: event.total,
-                    currentModel: event.data.model
+                const updatedLastMsg = {
+                  ...lastMsg,
+                  loading: {
+                    ...lastMsg.loading,
+                    search: false
+                  },
+                  metadata: {
+                    ...lastMsg.metadata,
+                    search_query: event.data.search_query,
+                    search_context: event.data.search_context,
                   }
-                },
-                stage1: updatedStage1
-              };
+                };
 
-              messages[messages.length - 1] = updatedLastMsg;
+                messages[messages.length - 1] = updatedLastMsg;
+                return { ...prev, messages };
+              });
+              break;
 
-              return { ...prev, messages };
-            });
-            break;
+            case 'stage1_start':
+              setCurrentConversation((prev) => {
+                const messages = [...prev.messages];
+                const lastMsg = messages[messages.length - 1];
 
-          case 'stage1_complete':
-            setCurrentConversation((prev) => {
-              const messages = [...prev.messages];
-              const lastMsg = messages[messages.length - 1];
-
-              // Immutable update to prevent React rendering issues
-              const updatedLastMsg = {
-                ...lastMsg,
-                stage1: event.data,
-                loading: {
-                  ...lastMsg.loading,
-                  stage1: false
-                },
-                timers: {
-                  ...lastMsg.timers,
-                  stage1End: Date.now()
-                }
-              };
-
-              messages[messages.length - 1] = updatedLastMsg;
-              return { ...prev, messages };
-            });
-            break;
-
-          case 'stage2_start':
-            setCurrentConversation((prev) => {
-              const messages = [...prev.messages];
-              const lastMsg = messages[messages.length - 1];
-
-              const updatedLastMsg = {
-                ...lastMsg,
-                loading: {
-                  ...lastMsg.loading,
-                  stage2: true
-                },
-                timers: {
-                  ...lastMsg.timers,
-                  stage2Start: Date.now()
-                }
-              };
-
-              messages[messages.length - 1] = updatedLastMsg;
-              return { ...prev, messages };
-            });
-            break;
-
-          case 'stage2_init':
-            setCurrentConversation((prev) => {
-              const messages = [...prev.messages];
-              const lastMsg = messages[messages.length - 1];
-
-              const updatedLastMsg = {
-                ...lastMsg,
-                progress: {
-                  ...lastMsg.progress,
-                  stage2: {
-                    count: 0,
-                    total: event.total,
-                    currentModel: null
+                const updatedLastMsg = {
+                  ...lastMsg,
+                  loading: {
+                    ...lastMsg.loading,
+                    stage1: true
+                  },
+                  timers: {
+                    ...lastMsg.timers,
+                    stage1Start: Date.now()
                   }
-                }
-              };
+                };
 
-              messages[messages.length - 1] = updatedLastMsg;
-              return { ...prev, messages };
-            });
-            break;
+                messages[messages.length - 1] = updatedLastMsg;
+                return { ...prev, messages };
+              });
+              break;
 
-          case 'stage2_progress':
-            setCurrentConversation((prev) => {
-              const messages = [...prev.messages];
-              const lastMsg = messages[messages.length - 1];
+            case 'stage1_init':
+              console.log('DEBUG: Received stage1_init', event);
+              setCurrentConversation((prev) => {
+                const messages = [...prev.messages];
+                const lastMsg = messages[messages.length - 1];
 
-              // Immutable update for stage2
-              const updatedStage2 = lastMsg.stage2 ? [...lastMsg.stage2, event.data] : [event.data];
-              const updatedLastMsg = {
-                ...lastMsg,
-                progress: {
-                  ...lastMsg.progress,
-                  stage2: {
-                    count: event.count,
-                    total: event.total,
-                    currentModel: event.data.model
+                const updatedLastMsg = {
+                  ...lastMsg,
+                  progress: {
+                    ...lastMsg.progress,
+                    stage1: {
+                      count: 0,
+                      total: event.total,
+                      currentModel: null
+                    }
                   }
-                },
-                stage2: updatedStage2
-              };
+                };
 
-              messages[messages.length - 1] = updatedLastMsg;
+                messages[messages.length - 1] = updatedLastMsg;
+                return { ...prev, messages };
+              });
+              break;
 
-              return { ...prev, messages };
-            });
-            break;
+            case 'stage1_progress':
+              setCurrentConversation((prev) => {
+                const messages = [...prev.messages];
+                const lastMsg = messages[messages.length - 1];
 
-          case 'stage2_complete':
-            setCurrentConversation((prev) => {
-              const messages = [...prev.messages];
-              const lastMsg = messages[messages.length - 1];
+                // Immutable update for stage1
+                const updatedStage1 = lastMsg.stage1 ? [...lastMsg.stage1, event.data] : [event.data];
+                const updatedLastMsg = {
+                  ...lastMsg,
+                  progress: {
+                    ...lastMsg.progress,
+                    stage1: {
+                      count: event.count,
+                      total: event.total,
+                      currentModel: event.data.model
+                    }
+                  },
+                  stage1: updatedStage1
+                };
 
-              // Immutable update to prevent React rendering issues
-              const updatedLastMsg = {
-                ...lastMsg,
-                stage2: event.data,
-                loading: {
-                  ...lastMsg.loading,
-                  stage2: false
-                },
-                timers: {
-                  ...lastMsg.timers,
-                  stage2End: Date.now()
-                },
-                metadata: {
-                  ...lastMsg.metadata,
-                  ...event.metadata
-                }
-              };
+                messages[messages.length - 1] = updatedLastMsg;
 
-              messages[messages.length - 1] = updatedLastMsg;
-              return { ...prev, messages };
-            });
-            break;
+                return { ...prev, messages };
+              });
+              break;
 
-          case 'stage3_start':
-            setCurrentConversation((prev) => {
-              const messages = [...prev.messages];
-              const lastMsg = messages[messages.length - 1];
+            case 'stage1_complete':
+              setCurrentConversation((prev) => {
+                const messages = [...prev.messages];
+                const lastMsg = messages[messages.length - 1];
 
-              const updatedLastMsg = {
-                ...lastMsg,
-                loading: {
-                  ...lastMsg.loading,
-                  stage3: true
-                },
-                timers: {
-                  ...lastMsg.timers,
-                  stage3Start: Date.now()
-                }
-              };
+                // Immutable update to prevent React rendering issues
+                const updatedLastMsg = {
+                  ...lastMsg,
+                  stage1: event.data,
+                  loading: {
+                    ...lastMsg.loading,
+                    stage1: false
+                  },
+                  timers: {
+                    ...lastMsg.timers,
+                    stage1End: Date.now()
+                  }
+                };
 
-              messages[messages.length - 1] = updatedLastMsg;
-              return { ...prev, messages };
-            });
-            break;
+                messages[messages.length - 1] = updatedLastMsg;
+                return { ...prev, messages };
+              });
+              break;
 
-          case 'stage3_complete':
-            setCurrentConversation((prev) => {
-              const messages = [...prev.messages];
-              const lastMsg = messages[messages.length - 1];
+            case 'stage2_start':
+              setCurrentConversation((prev) => {
+                const messages = [...prev.messages];
+                const lastMsg = messages[messages.length - 1];
 
-              // Immutable update to prevent React rendering issues
-              const updatedLastMsg = {
-                ...lastMsg,
-                stage3: event.data,
-                loading: {
-                  ...lastMsg.loading,
-                  stage3: false
-                },
-                timers: {
-                  ...lastMsg.timers,
-                  stage3End: Date.now()
-                }
-              };
+                const updatedLastMsg = {
+                  ...lastMsg,
+                  loading: {
+                    ...lastMsg.loading,
+                    stage2: true
+                  },
+                  timers: {
+                    ...lastMsg.timers,
+                    stage2Start: Date.now()
+                  }
+                };
 
-              messages[messages.length - 1] = updatedLastMsg;
-              return { ...prev, messages };
-            });
-            // Hide loading indicator once final answer is shown
-            setIsLoading(false);
-            break;
+                messages[messages.length - 1] = updatedLastMsg;
+                return { ...prev, messages };
+              });
+              break;
 
-          case 'title_complete':
-            // Reload conversations to get updated title
-            loadConversations();
-            break;
+            case 'stage2_init':
+              setCurrentConversation((prev) => {
+                const messages = [...prev.messages];
+                const lastMsg = messages[messages.length - 1];
 
-          case 'complete':
-            // Stream complete, reload conversations list
-            loadConversations();
-            setIsLoading(false);
-            break;
+                const updatedLastMsg = {
+                  ...lastMsg,
+                  progress: {
+                    ...lastMsg.progress,
+                    stage2: {
+                      count: 0,
+                      total: event.total,
+                      currentModel: null
+                    }
+                  }
+                };
 
-          case 'error':
-            console.error('Stream error:', event.message);
-            setIsLoading(false);
-            break;
+                messages[messages.length - 1] = updatedLastMsg;
+                return { ...prev, messages };
+              });
+              break;
 
-          default:
-            console.log('Unknown event type:', eventType);
-        }
-      }, abortControllerRef.current?.signal);
+            case 'stage2_progress':
+              setCurrentConversation((prev) => {
+                const messages = [...prev.messages];
+                const lastMsg = messages[messages.length - 1];
+
+                // Immutable update for stage2
+                const updatedStage2 = lastMsg.stage2 ? [...lastMsg.stage2, event.data] : [event.data];
+                const updatedLastMsg = {
+                  ...lastMsg,
+                  progress: {
+                    ...lastMsg.progress,
+                    stage2: {
+                      count: event.count,
+                      total: event.total,
+                      currentModel: event.data.model
+                    }
+                  },
+                  stage2: updatedStage2
+                };
+
+                messages[messages.length - 1] = updatedLastMsg;
+
+                return { ...prev, messages };
+              });
+              break;
+
+            case 'stage2_complete':
+              setCurrentConversation((prev) => {
+                const messages = [...prev.messages];
+                const lastMsg = messages[messages.length - 1];
+
+                // Immutable update to prevent React rendering issues
+                const updatedLastMsg = {
+                  ...lastMsg,
+                  stage2: event.data,
+                  loading: {
+                    ...lastMsg.loading,
+                    stage2: false
+                  },
+                  timers: {
+                    ...lastMsg.timers,
+                    stage2End: Date.now()
+                  },
+                  metadata: {
+                    ...lastMsg.metadata,
+                    ...event.metadata
+                  }
+                };
+
+                messages[messages.length - 1] = updatedLastMsg;
+                return { ...prev, messages };
+              });
+              break;
+
+            case 'stage3_start':
+              setCurrentConversation((prev) => {
+                const messages = [...prev.messages];
+                const lastMsg = messages[messages.length - 1];
+
+                const updatedLastMsg = {
+                  ...lastMsg,
+                  loading: {
+                    ...lastMsg.loading,
+                    stage3: true
+                  },
+                  timers: {
+                    ...lastMsg.timers,
+                    stage3Start: Date.now()
+                  }
+                };
+
+                messages[messages.length - 1] = updatedLastMsg;
+                return { ...prev, messages };
+              });
+              break;
+
+            case 'stage3_complete':
+              setCurrentConversation((prev) => {
+                const messages = [...prev.messages];
+                const lastMsg = messages[messages.length - 1];
+
+                // Immutable update to prevent React rendering issues
+                const updatedLastMsg = {
+                  ...lastMsg,
+                  stage3: event.data,
+                  loading: {
+                    ...lastMsg.loading,
+                    stage3: false
+                  },
+                  timers: {
+                    ...lastMsg.timers,
+                    stage3End: Date.now()
+                  }
+                };
+
+                messages[messages.length - 1] = updatedLastMsg;
+                return { ...prev, messages };
+              });
+              // Hide loading indicator once final answer is shown
+              setIsLoading(false);
+              break;
+
+            case 'title_complete':
+              // Reload conversations to get updated title
+              loadConversations();
+              break;
+
+            case 'complete':
+              // Stream complete, reload conversations list
+              loadConversations();
+              setIsLoading(false);
+              break;
+
+            case 'error':
+              console.error('Stream error:', event.message);
+              setIsLoading(false);
+              break;
+
+            default:
+              console.log('Unknown event type:', eventType);
+          }
+        }, abortControllerRef.current?.signal);
     } catch (error) {
       // Handle aborted requests - mark message as aborted
       if (error.name === 'AbortError') {
@@ -642,6 +669,8 @@ function App() {
         councilModels={councilModels}
         chairmanModel={chairmanModel}
         onOpenSettings={handleOpenSettings}
+        executionMode={executionMode}
+        onExecutionModeChange={setExecutionMode}
       />
       {showSettings && (
         <Settings

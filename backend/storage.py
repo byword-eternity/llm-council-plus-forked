@@ -130,19 +130,21 @@ def add_user_message(conversation_id: str, content: str):
 def add_assistant_message(
     conversation_id: str,
     stage1: List[Dict[str, Any]],
-    stage2: List[Dict[str, Any]],
-    stage3: Dict[str, Any],
+    stage2: Optional[List[Dict[str, Any]]] = None,
+    stage3: Optional[Dict[str,Any]] = None,
     metadata: Optional[Dict[str, Any]] = None
 ):
     """
-    Add an assistant message with all 3 stages to a conversation.
-
+    Add an assistant message to a conversation.
+    
+    Supports partial execution modes where stage2 and/or stage3 may be None.
+    
     Args:
         conversation_id: Conversation identifier
-        stage1: List of individual model responses
-        stage2: List of model rankings
-        stage3: Final synthesized response
-        metadata: Optional metadata (label_to_model, aggregate_rankings, search_query)
+        stage1: List of individual model responses (always present)
+        stage2: List of model rankings (None if execution_mode was 'chat_only')
+        stage3: Final synthesized response (None if execution_mode was not 'full')
+        metadata: Optional metadata including execution_mode, label_to_model, etc.
     """
     conversation = get_conversation(conversation_id)
     if conversation is None:
@@ -151,9 +153,13 @@ def add_assistant_message(
     message = {
         "role": "assistant",
         "stage1": stage1,
-        "stage2": stage2,
-        "stage3": stage3
     }
+    
+    # Only include stage2 and stage3 if they were executed
+    if stage2 is not None:
+        message["stage2"] = stage2
+    if stage3 is not None:
+        message["stage3"] = stage3
 
     if metadata:
         message["metadata"] = metadata
