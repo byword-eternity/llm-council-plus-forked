@@ -94,7 +94,7 @@ export default function ChatInterface({
           conversation.messages.map((msg, index) => (
             <div key={index} className={`message ${msg.role}`}>
               <div className="message-role">
-                {msg.role === 'user' ? 'You' : 'LLM Council'}
+                {msg.role === 'user' ? 'Your Question to the Council' : 'LLM Council'}
               </div>
               
               <div className="message-content">
