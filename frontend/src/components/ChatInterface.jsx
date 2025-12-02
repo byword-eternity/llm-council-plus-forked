@@ -1,241 +1,289 @@
 import StageTimer from './StageTimer';
-// ... imports
 import { useState, useEffect, useRef } from 'react';
 import ReactMarkdown from 'react-markdown';
 import SearchContext from './SearchContext';
 import Stage1 from './Stage1';
 import Stage2 from './Stage2';
 import Stage3 from './Stage3';
+import CouncilGrid from './CouncilGrid';
+import { api } from '../api';
 import './ChatInterface.css';
 
 export default function ChatInterface({
-  conversation,
-  onSendMessage,
-  onAbort,
-  isLoading,
-  councilConfigured = true,
-  onOpenSettings,
+    conversation,
+    onSendMessage,
+    onAbort,
+    isLoading,
+    councilConfigured,
+    onOpenSettings,
 }) {
-  const [input, setInput] = useState('');
-  const [webSearch, setWebSearch] = useState(false);
-  const messagesEndRef = useRef(null);
-  const messagesContainerRef = useRef(null);
+    const [input, setInput] = useState('');
+    const [webSearch, setWebSearch] = useState(false);
+    const [councilModels, setCouncilModels] = useState([]);
+    const [chairmanModel, setChairmanModel] = useState(null);
+    const messagesEndRef = useRef(null);
+    const messagesContainerRef = useRef(null);
 
-  const scrollToBottom = () => {
-    messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' });
-  };
+    // Fetch settings to get council models for the welcome screen
+    useEffect(() => {
+        const fetchSettings = async () => {
+            try {
+                const settings = await api.getSettings();
+                if (settings.council_models) {
+                    setCouncilModels(settings.council_models);
+                }
+                if (settings.chairman_model) {
+                    setChairmanModel(settings.chairman_model);
+                }
+            } catch (error) {
+                console.error('Failed to fetch settings for council grid:', error);
+            }
+        };
+        fetchSettings();
+    }, []);
 
-  // Only auto-scroll if user is already near the bottom
-  // This prevents interrupting reading when new content arrives
-  useEffect(() => {
-    if (!messagesContainerRef.current) return;
+    const scrollToBottom = () => {
+        messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' });
+    };
 
-    const container = messagesContainerRef.current;
-    const isNearBottom =
-      container.scrollHeight - container.scrollTop - container.clientHeight < 150;
+    // Only auto-scroll if user is already near the bottom
+    // This prevents interrupting reading when new content arrives
+    useEffect(() => {
+        if (!messagesContainerRef.current) return;
 
-    // Auto-scroll only if user is already at/near bottom
-    if (isNearBottom) {
-      scrollToBottom();
+        const container = messagesContainerRef.current;
+        const isNearBottom =
+            container.scrollHeight - container.scrollTop - container.clientHeight < 150;
+
+        // Auto-scroll only if user is already at/near bottom
+        if (isNearBottom) {
+            scrollToBottom();
+        }
+    }, [conversation]);
+
+    const handleSubmit = (e) => {
+        e.preventDefault();
+        if (input.trim() && !isLoading) {
+            onSendMessage(input, webSearch);
+            setInput('');
+        }
+    };
+
+    const handleKeyDown = (e) => {
+        // Submit on Enter (without Shift)
+        if (e.key === 'Enter' && !e.shiftKey) {
+            e.preventDefault();
+            handleSubmit(e);
+        }
+    };
+
+    if (!conversation) {
+        return (
+            <div className="chat-interface">
+                <div className="empty-state">
+                    <h1>Welcome to LLM Council <span className="plus-text">Plus</span></h1>
+                    <p>The Council is ready to deliberate.</p>
+
+                    {/* Council Preview Grid */}
+                    <div className="welcome-grid-container">
+                        <CouncilGrid models={councilModels} chairman={chairmanModel} status="idle" />
+                    </div>
+
+                    <div className="app-footer">
+                        <span>Version: 1.0.0</span>
+                        <span className="footer-separator">•</span>
+                        <span>Created by: Jacob Ben-David</span>
+                    </div>
+                </div>
+            </div>
+        );
     }
-  }, [conversation]);
 
-  const handleSubmit = (e) => {
-    e.preventDefault();
-    if (input.trim() && !isLoading) {
-      onSendMessage(input, webSearch);
-      setInput('');
-    }
-  };
-
-  const handleKeyDown = (e) => {
-    // Submit on Enter (without Shift)
-    if (e.key === 'Enter' && !e.shiftKey) {
-      e.preventDefault();
-      handleSubmit(e);
-    }
-  };
-
-  if (!conversation) {
     return (
-      <div className="chat-interface">
-        <div className="empty-state">
-          <h1>Welcome to LLM Council <span className="plus-text">Plus</span></h1>
-          <p>Create a new conversation to get started</p>
-          <div className="app-footer">
-            <span>Version: 1.0.0</span>
-            <span className="footer-separator">•</span>
-            <span>Created by: Jacob Ben-David</span>
-          </div>
-        </div>
-      </div>
-    );
-  }
-
-  return (
-    <div className="chat-interface">
-      {/* Messages Area */}
-      <div className="messages-area" ref={messagesContainerRef}>
-        {(!conversation || conversation.messages.length === 0) ? (
-          <div className="hero-container">
-            <div className="hero-content">
-              <h1>Welcome to LLM Council <span className="text-gradient">Plus</span></h1>
-              <p className="hero-subtitle">
-                Create a new conversation to get started
-              </p>
-            </div>
-            <div className="hero-footer">
-              <span>Version: 1.0.0</span>
-              <span className="footer-separator">•</span>
-              <span>Created by: Jacob Ben-David</span>
-            </div>
-          </div>
-        ) : (
-          conversation.messages.map((msg, index) => (
-            <div key={index} className={`message ${msg.role}`}>
-              <div className="message-role">
-                {msg.role === 'user' ? 'Your Question to the Council' : 'LLM Council'}
-              </div>
-              
-              <div className="message-content">
-                {msg.role === 'user' ? (
-                  <div className="markdown-content">
-                    <ReactMarkdown>{msg.content}</ReactMarkdown>
-                  </div>
+        <div className="chat-interface">
+            {/* Messages Area */}
+            <div className="messages-area" ref={messagesContainerRef}>
+                {(!conversation || conversation.messages.length === 0) ? (
+                    <div className="hero-container">
+                        <div className="hero-content">
+                            <h1>Welcome to LLM Council <span className="text-gradient">Plus</span></h1>
+                            <p className="hero-subtitle">
+                                The Council is ready to deliberate.
+                            </p>
+                            <div className="welcome-grid-container">
+                                <CouncilGrid models={councilModels} chairman={chairmanModel} status="idle" />
+                            </div>
+                        </div>
+                        <div className="hero-footer">
+                            <span>Version: 1.0.0</span>
+                            <span className="footer-separator">•</span>
+                            <span>Created by: Jacob Ben-David</span>
+                        </div>
+                    </div>
                 ) : (
-                  <>
-                    {/* Search Loading */}
-                    {msg.loading?.search && (
-                      <div className="stage-loading">
-                        <div className="spinner"></div>
-                        <span>Searching the web...</span>
-                      </div>
-                    )}
+                    conversation.messages.map((msg, index) => (
+                        <div key={index} className={`message ${msg.role}`}>
+                            <div className="message-role">
+                                {msg.role === 'user' ? 'Your Question to the Council' : 'LLM Council'}
+                            </div>
 
-                    {/* Search Context */}
-                    {msg.metadata?.search_context && (
-                      <SearchContext
-                        searchQuery={msg.metadata?.search_query}
-                        searchContext={msg.metadata?.search_context}
-                      />
-                    )}
+                            <div className="message-content">
+                                {msg.role === 'user' ? (
+                                    <div className="markdown-content">
+                                        <ReactMarkdown>{msg.content}</ReactMarkdown>
+                                    </div>
+                                ) : (
+                                    <>
+                                        {/* Search Loading */}
+                                        {msg.loading?.search && (
+                                            <div className="stage-loading">
+                                                <div className="spinner"></div>
+                                                <span>Searching the web...</span>
+                                            </div>
+                                        )}
 
-                    {/* Stage 1 */}
-                    {msg.loading?.stage1 && (
-                      <div className="stage-loading">
-                        <div className="spinner"></div>
-                        <span>Running Stage 1... {msg.progress?.stage1?.count}/{msg.progress?.stage1?.total}</span>
-                      </div>
-                    )}
-                    {msg.stage1 && (
-                      <Stage1
-                        responses={msg.stage1}
-                        startTime={msg.timers?.stage1Start}
-                        endTime={msg.timers?.stage1End}
-                      />
-                    )}
+                                        {/* Search Context */}
+                                        {msg.metadata?.search_context && (
+                                            <SearchContext
+                                                searchQuery={msg.metadata?.search_query}
+                                                searchContext={msg.metadata?.search_context}
+                                            />
+                                        )}
 
-                    {/* Stage 2 */}
-                    {msg.loading?.stage2 && (
-                      <div className="stage-loading">
-                        <div className="spinner"></div>
-                        <span>Running Stage 2...</span>
-                      </div>
-                    )}
-                    {msg.stage2 && (
-                      <Stage2
-                        rankings={msg.stage2}
-                        labelToModel={msg.metadata?.label_to_model}
-                        aggregateRankings={msg.metadata?.aggregate_rankings}
-                        startTime={msg.timers?.stage2Start}
-                        endTime={msg.timers?.stage2End}
-                      />
-                    )}
+                                        {/* Stage 1: Council Grid Visualization */}
+                                        {(msg.loading?.stage1 || (msg.stage1 && !msg.stage2)) && (
+                                            <div className="stage-container">
+                                                <div className="stage-header">
+                                                    <h3>Stage 1: Council Deliberation</h3>
+                                                    {msg.timers?.stage1Start && (
+                                                        <StageTimer
+                                                            startTime={msg.timers.stage1Start}
+                                                            endTime={msg.timers.stage1End}
+                                                        />
+                                                    )}
+                                                </div>
+                                                <CouncilGrid
+                                                    models={councilModels} // Use the same models list
+                                                    chairman={chairmanModel}
+                                                    status={msg.loading?.stage1 ? 'thinking' : 'complete'}
+                                                    progress={{
+                                                        currentModel: msg.progress?.stage1?.currentModel,
+                                                        completed: msg.stage1?.map(r => r.model) || []
+                                                    }}
+                                                />
+                                            </div>
+                                        )}
 
-                    {/* Stage 3 */}
-                    {msg.loading?.stage3 && (
-                      <div className="stage-loading">
-                        <div className="spinner"></div>
-                        <span>Final Synthesis...</span>
-                      </div>
-                    )}
-                    {msg.stage3 && (
-                      <Stage3
-                        finalResponse={msg.stage3}
-                        startTime={msg.timers?.stage3Start}
-                        endTime={msg.timers?.stage3End}
-                      />
-                    )}
+                                        {/* Stage 1 Results (Accordion/List - kept for detail view) */}
+                                        {msg.stage1 && (
+                                            <Stage1
+                                                responses={msg.stage1}
+                                                startTime={msg.timers?.stage1Start}
+                                                endTime={msg.timers?.stage1End}
+                                            />
+                                        )}
 
-                    {/* Aborted Indicator */}
-                    {msg.aborted && (
-                      <div className="aborted-indicator">
-                        <span className="aborted-icon">⏹</span>
-                        <span className="aborted-text">
-                          Generation stopped by user.
-                          {msg.stage1 && !msg.stage3 && ' Partial results shown above.'}
-                        </span>
-                      </div>
-                    )}
-                  </>
+                                        {/* Stage 2 */}
+                                        {msg.loading?.stage2 && (
+                                            <div className="stage-loading">
+                                                <div className="spinner"></div>
+                                                <span>Running Stage 2...</span>
+                                            </div>
+                                        )}
+                                        {msg.stage2 && (
+                                            <Stage2
+                                                rankings={msg.stage2}
+                                                labelToModel={msg.metadata?.label_to_model}
+                                                aggregateRankings={msg.metadata?.aggregate_rankings}
+                                                startTime={msg.timers?.stage2Start}
+                                                endTime={msg.timers?.stage2End}
+                                            />
+                                        )}
+
+                                        {/* Stage 3 */}
+                                        {msg.loading?.stage3 && (
+                                            <div className="stage-loading">
+                                                <div className="spinner"></div>
+                                                <span>Final Synthesis...</span>
+                                            </div>
+                                        )}
+                                        {msg.stage3 && (
+                                            <Stage3
+                                                finalResponse={msg.stage3}
+                                                startTime={msg.timers?.stage3Start}
+                                                endTime={msg.timers?.stage3End}
+                                            />
+                                        )}
+
+                                        {/* Aborted Indicator */}
+                                        {msg.aborted && (
+                                            <div className="aborted-indicator">
+                                                <span className="aborted-icon">⏹</span>
+                                                <span className="aborted-text">
+                                                    Generation stopped by user.
+                                                    {msg.stage1 && !msg.stage3 && ' Partial results shown above.'}
+                                                </span>
+                                            </div>
+                                        )}
+                                    </>
+                                )}
+                            </div>
+                        </div>
+                    ))
                 )}
-              </div>
+
+                {/* Bottom Spacer for floating input */}
+                <div ref={messagesEndRef} style={{ height: '20px' }} />
             </div>
-          ))
-        )}
-        
-        {/* Bottom Spacer for floating input */}
-        <div ref={messagesEndRef} style={{ height: '20px' }} />
-      </div>
 
-      {/* Floating Command Capsule */}
-      <div className="input-area">
-        {!councilConfigured ? (
-          <div className="input-container config-required">
-            <span className="config-message">
-              ⚠️ Council not ready.
-              <button className="config-link" onClick={() => onOpenSettings('llm_keys')}>Configure API Keys</button>
-              <span className="config-separator">or</span>
-              <button className="config-link" onClick={() => onOpenSettings('council')}>Configure Council</button>
-            </span>
-          </div>
-        ) : (
-          <form className="input-container" onSubmit={handleSubmit}>
-            <label className={`search-toggle ${webSearch ? 'active' : ''}`} title="Toggle Web Search">
-              <input
-                type="checkbox"
-                className="search-checkbox"
-                checked={webSearch}
-                onChange={() => setWebSearch(!webSearch)}
-                disabled={isLoading}
-              />
-              <span className="search-icon">🌐</span>
-              {webSearch && <span className="search-label">Search On</span>}
-            </label>
+            {/* Floating Command Capsule */}
+            <div className="input-area">
+                {!councilConfigured ? (
+                    <div className="input-container config-required">
+                        <span className="config-message">
+                            ⚠️ Council not ready.
+                            <button className="config-link" onClick={() => onOpenSettings('llm_keys')}>Configure API Keys</button>
+                            <span className="config-separator">or</span>
+                            <button className="config-link" onClick={() => onOpenSettings('council')}>Configure Council</button>
+                        </span>
+                    </div>
+                ) : (
+                    <form className="input-container" onSubmit={handleSubmit}>
+                        <label className={`search-toggle ${webSearch ? 'active' : ''}`} title="Toggle Web Search">
+                            <input
+                                type="checkbox"
+                                className="search-checkbox"
+                                checked={webSearch}
+                                onChange={() => setWebSearch(!webSearch)}
+                                disabled={isLoading}
+                            />
+                            <span className="search-icon">🌐</span>
+                            {webSearch && <span className="search-label">Search On</span>}
+                        </label>
 
-            <textarea
-              className="message-input"
-              placeholder={isLoading ? "Consulting..." : "Ask the Council..."}
-              value={input}
-              onChange={(e) => setInput(e.target.value)}
-              onKeyDown={handleKeyDown}
-              disabled={isLoading}
-              rows={1}
-              style={{ height: 'auto', minHeight: '24px' }}
-            />
+                        <textarea
+                            className="message-input"
+                            placeholder={isLoading ? "Consulting..." : "Ask the Council..."}
+                            value={input}
+                            onChange={(e) => setInput(e.target.value)}
+                            onKeyDown={handleKeyDown}
+                            disabled={isLoading}
+                            rows={1}
+                            style={{ height: 'auto', minHeight: '24px' }}
+                        />
 
-            {isLoading ? (
-              <button type="button" className="send-button stop-button" onClick={onAbort} title="Stop Generation">
-                ⏹
-              </button>
-            ) : (
-              <button type="submit" className="send-button" disabled={!input.trim()}>
-                ➤
-              </button>
-            )}
-          </form>
-        )}
-      </div>
-    </div>
-  );
+                        {isLoading ? (
+                            <button type="button" className="send-button stop-button" onClick={onAbort} title="Stop Generation">
+                                ⏹
+                            </button>
+                        ) : (
+                            <button type="submit" className="send-button" disabled={!input.trim()}>
+                                ➤
+                            </button>
+                        )}
+                    </form>
+                )}
+            </div>
+        </div>
+    );
 }

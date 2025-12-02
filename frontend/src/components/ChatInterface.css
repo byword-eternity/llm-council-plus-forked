@@ -502,3 +502,12 @@
   font-size: 14px;
   font-family: var(--font-ui);
 }
+
+/* Chat Interface Styles */
+.welcome-grid-container {
+  width: 100%;
+  max-width: 800px;
+  margin: 2rem auto;
+  display: flex;
+  justify-content: center;
+}
