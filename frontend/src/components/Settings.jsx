@@ -723,13 +723,13 @@ export default function Settings({ onClose, ollamaStatus, onRefreshOllama }) {
       });
 
       // 2. Reset Models to "Blank Slate" (User must select)
-      // Initialize with 3 empty slots for council
-      setCouncilModels(['', '', '']);
+      // Initialize with 4 empty slots for council
+      setCouncilModels(['', '', '', '']);
       setChairmanModel('');
       setSearchQueryModel('');
-      
+
       // Reset filters to 'remote' default
-      setCouncilMemberFilters({ 0: 'remote', 1: 'remote', 2: 'remote' });
+      setCouncilMemberFilters({ 0: 'remote', 1: 'remote', 2: 'remote', 3: 'remote' });
       setChairmanFilter('remote');
       setSearchQueryFilter('remote');
 
@@ -748,10 +748,37 @@ export default function Settings({ onClose, ollamaStatus, onRefreshOllama }) {
         search_query_prompt: defaults.search_query_prompt
       });
 
+      // 5. Save the reset settings to backend
+      const updates = {
+        search_provider: 'duckduckgo',
+        full_content_results: 3,
+        enabled_providers: {
+          openrouter: false,
+          ollama: false,
+          groq: false,
+          direct: false
+        },
+        direct_provider_toggles: {
+          openai: false,
+          anthropic: false,
+          google: false,
+          mistral: false,
+          deepseek: false
+        },
+        council_models: ['', '', '', ''],
+        chairman_model: '',
+        search_query_model: '',
+        stage1_prompt: defaults.stage1_prompt,
+        stage2_prompt: defaults.stage2_prompt,
+        stage3_prompt: defaults.stage3_prompt,
+        search_query_prompt: defaults.search_query_prompt
+      };
+      await api.updateSettings(updates);
+
       setSuccess(true);
       // Navigate to Council Config so user sees the blank state
       setActiveSection('council');
-      
+
       setTimeout(() => setSuccess(false), 3000);
     } catch (err) {
       setError('Failed to reset settings');
@@ -1883,8 +1910,8 @@ export default function Settings({ onClose, ollamaStatus, onRefreshOllama }) {
                     </div>
                 </div>
 
-                <div className="subsection" style={{ marginTop: '32px', paddingTop: '20px', borderTop: '1px solid #eee' }}>
-                   <h4 style={{color: '#d32f2f'}}>Danger Zone</h4>
+                <div className="subsection" style={{ marginTop: '32px', paddingTop: '20px', borderTop: '1px solid rgba(255, 255, 255, 0.1)' }}>
+                   <h4 style={{color: '#f87171'}}>Danger Zone</h4>
                    <p className="section-description">
                      Reset all settings to their default values. This will clear your council selection and custom prompts.
                      API keys will be preserved.
