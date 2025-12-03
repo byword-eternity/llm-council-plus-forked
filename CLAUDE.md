@@ -9,7 +9,7 @@ LLM Council Plus is a 3-stage deliberation system where multiple LLMs collaborat
 2. **Stage 2**: Anonymous peer review/ranking to prevent bias
 3. **Stage 3**: Chairman synthesis of collective wisdom
 
-**Key Innovation**: Hybrid architecture supporting OpenRouter (cloud), Ollama (local), Groq (fast inference), and direct provider connections.
+**Key Innovation**: Hybrid architecture supporting OpenRouter (cloud), Ollama (local), Groq (fast inference), direct provider connections, and custom OpenAI-compatible endpoints.
 
 ## Running the Application
 
@@ -31,6 +31,13 @@ npm run dev
 **Ports:**
 - Backend: `http://localhost:8001` (NOT 8000 - avoid conflicts)
 - Frontend: `http://localhost:5173`
+
+**Network Access:**
+```bash
+# Backend already listens on 0.0.0.0:8001
+# Frontend with network access:
+cd frontend && npm run dev -- --host
+```
 
 **Installing Dependencies:**
 ```bash
@@ -54,15 +61,15 @@ This fixes binary incompatibilities (e.g., `@rollup/rollup-darwin-*` variants).
 
 **Provider System** (`backend/providers/`)
 - **Base**: `base.py` - Abstract interface for all LLM providers
-- **Implementations**: `openrouter.py`, `ollama.py`, `groq.py`, `openai.py`, `anthropic.py`, `google.py`, `mistral.py`, `deepseek.py`
-- **Auto-routing**: Model IDs with prefix (e.g., `openai:gpt-4.1`, `ollama:llama3`, `groq:llama3-70b-8192`) route to correct provider
+- **Implementations**: `openrouter.py`, `ollama.py`, `groq.py`, `openai.py`, `anthropic.py`, `google.py`, `mistral.py`, `deepseek.py`, `custom_openai.py`
+- **Auto-routing**: Model IDs with prefix (e.g., `openai:gpt-4.1`, `ollama:llama3`, `custom:model-name`) route to correct provider
 - **Routing logic**: `council.py:get_provider_for_model()` handles prefix parsing
 
 **Core Modules**
 
 | Module | Purpose |
 |--------|---------|
-| `council.py` | Orchestration: stage1/2/3 collection, rankings, title/search query generation |
+| `council.py` | Orchestration: stage1/2/3 collection, rankings, title generation |
 | `search.py` | Web search: DuckDuckGo, Tavily, Brave with Jina Reader content fetch |
 | `settings.py` | Config management, persisted to `data/settings.json` |
 | `prompts.py` | Default system prompts for all stages |
@@ -74,12 +81,14 @@ This fixes binary incompatibilities (e.g., `@rollup/rollup-darwin-*` variants).
 | Component | Purpose |
 |-----------|---------|
 | `App.jsx` | Main orchestration, SSE streaming, conversation state |
-| `ChatInterface.jsx` | User input, web search toggle |
+| `ChatInterface.jsx` | User input, web search toggle, execution mode |
 | `Stage1.jsx` | Tab view of individual model responses |
 | `Stage2.jsx` | Peer rankings with de-anonymization, aggregate scores |
 | `Stage3.jsx` | Chairman synthesis (final answer) |
-| `Settings.jsx` | 4-section sidebar: Council Config, API Keys, System Prompts, General |
+| `CouncilGrid.jsx` | Visual grid of council members with provider icons |
+| `Settings.jsx` | 5-section settings: LLM API Keys, Council Config, System Prompts, Search Providers, Backup & Reset |
 | `Sidebar.jsx` | Conversation list with inline delete confirmation |
+| `SearchableModelSelect.jsx` | Searchable dropdown for model selection |
 
 **Styling**: "Midnight Glass" dark theme with glassmorphic effects. Primary colors: blue (#3b82f6) and cyan (#06b6d4) gradients. Font: Merriweather 15px/1.7 for content, JetBrains Mono for errors.
 
@@ -106,6 +115,7 @@ ollama:llama3.1:latest                → Local via Ollama
 groq:llama3-70b-8192                  → Fast inference via Groq
 openai:gpt-4.1                        → Direct OpenAI connection
 anthropic:claude-sonnet-4             → Direct Anthropic connection
+custom:model-name                     → Custom OpenAI-compatible endpoint
 ```
 
 ### Model Name Display Helper
@@ -116,6 +126,19 @@ const getShortModelName = (modelId) => {
   if (modelId.includes('/')) return modelId.split('/').pop();
   if (modelId.includes(':')) return modelId.split(':').pop();
   return modelId;
+};
+```
+
+### Provider Icon Detection (CouncilGrid.jsx)
+Check prefixes FIRST before name-based detection to avoid mismatches:
+```jsx
+const getProviderInfo = (modelId) => {
+    const id = modelId.toLowerCase();
+    // Check prefixes FIRST (order matters!)
+    if (id.startsWith('custom:')) return PROVIDER_CONFIG.custom;
+    if (id.startsWith('ollama:')) return PROVIDER_CONFIG.ollama;
+    if (id.startsWith('groq:')) return PROVIDER_CONFIG.groq;
+    // Then check name-based patterns...
 };
 ```
 
@@ -131,7 +154,7 @@ Fallback regex extracts "Response X" patterns if format not followed.
 
 ### Streaming & Abort Logic
 - Backend checks `request.is_disconnected()` inside loops
-- Frontend aborts by closing `EventSource` connection
+- Frontend aborts via AbortController signal
 - **Critical**: Always inject raw `Request` object into streaming endpoints (Pydantic models lack `is_disconnected()`)
 
 ### ReactMarkdown Safety
@@ -166,18 +189,20 @@ useEffect(() => {
 
 5. **Search Rate Limits**: DuckDuckGo can rate-limit. Retry logic in `search.py` handles this.
 
-6. **Model Deduplication**: When multiple sources provide same model, use Map-based deduplication preferring direct connections.
+6. **Jina Reader 451 Errors**: Many news sites block AI scrapers. Use Tavily/Brave or set `full_content_results` to 0.
 
-7. **Binary Dependencies**: `node_modules` in iCloud can break between Mac architectures. Delete and reinstall.
+7. **Model Deduplication**: When multiple sources provide same model, use Map-based deduplication preferring direct connections.
+
+8. **Binary Dependencies**: `node_modules` in iCloud can break between Mac architectures. Delete and reinstall.
+
+9. **Custom Endpoint Icons**: Models from custom endpoints may match name patterns (e.g., "claude"). Check `custom:` prefix first.
 
 ## Data Flow
 
 ```
 User Query (+ optional web search)
     ↓
-[Generate search query via LLM] (if enabled)
-    ↓
-[Fetch search results + full content for top N]
+[Web Search: DuckDuckGo/Tavily/Brave + Jina Reader]
     ↓
 Stage 1: Parallel queries → Stream individual responses
     ↓
@@ -190,17 +215,21 @@ Stage 3: Chairman synthesis → Stream final answer
 Save conversation (stage1, stage2, stage3 only)
 ```
 
+## Execution Modes
+
+Three modes control deliberation depth:
+- **Chat Only**: Stage 1 only (quick responses)
+- **Chat + Ranking**: Stages 1 & 2 (peer review without synthesis)
+- **Full Deliberation**: All 3 stages (default)
+
 ## Testing & Debugging
 
 ```bash
-# Test OpenRouter connectivity
-uv run python backend/test_openrouter.py
-
-# Test search providers
-uv run python backend/test_search.py
-
 # Check Ollama models
 curl http://localhost:11434/api/tags
+
+# Test custom endpoint
+curl https://your-endpoint.com/v1/models -H "Authorization: Bearer $API_KEY"
 
 # View logs
 # Watch terminal running backend/main.py
@@ -212,20 +241,28 @@ curl http://localhost:11434/api/tags
 
 **Full Content Fetching**: Jina Reader (`https://r.jina.ai/{url}`) extracts article text for top N results (configurable 0-10, default 3). Falls back to summary if fetch fails or yields <500 chars. 25-second timeout per article, 60-second total search budget.
 
-**Search Query Generation**: LLM extracts 3-6 key terms from user query. Customizable via Settings.
+**Search Query Processing**:
+- **Direct** (default): Send exact query to search engine
+- **YAKE**: Extract keywords first (useful for long prompts)
 
 ## Settings
 
 **UI Sections** (sidebar navigation):
-1. **Council Config**: Model selection with Remote/Local toggles, "I'm Feeling Lucky" randomizer
-2. **API Keys**: OpenRouter, Groq, Tavily, Brave, Direct providers
-3. **System Prompts**: Stage 1/2/3 and search query prompts
-4. **General & Search**: Search provider, full content results count
+1. **LLM API Keys**: OpenRouter, Groq, Ollama, Direct providers, Custom endpoint
+2. **Council Config**: Model selection with Remote/Local toggles, temperature controls, "I'm Feeling Lucky" randomizer
+3. **System Prompts**: Stage 1/2/3 prompts with reset-to-default
+4. **Search Providers**: DuckDuckGo, Tavily, Brave + Jina full content settings
+5. **Backup & Reset**: Import/Export config, reset to defaults
 
 **Auto-Save Behavior**:
-- **Credentials auto-save**: API keys and Ollama URL save immediately on successful validation (credentials are commitments)
-- **Configs require manual save**: Model selections, prompts, search provider (experimental, user may batch changes)
+- **Credentials auto-save**: API keys and URLs save immediately on successful test
+- **Configs require manual save**: Model selections, prompts, temperatures
 - UX flow: Test → Success → Auto-save → Clear input → "Settings saved!"
+
+**Temperature Controls**:
+- Council Heat: Stage 1 creativity (default: 0.5)
+- Chairman Heat: Stage 3 synthesis (default: 0.4)
+- Stage 2 Heat: Peer ranking consistency (default: 0.3)
 
 **Rate Limit Warnings**:
 - Formula: `(council_members × 2) + 2` requests per council run
@@ -240,8 +277,9 @@ curl http://localhost:11434/api/tags
 - **Transparency**: All raw outputs inspectable via tabs
 - **De-anonymization**: Models receive "Response A/B/C", frontend displays real names
 - **Progress Indicators**: "X/Y completed" during streaming
+- **Provider Flexibility**: Mix cloud, local, and custom endpoints freely
 
-## AI Coding Best Practices
+## Code Safety Guidelines
 
 **Communication:**
 - NEVER make assumptions when requirements are vague - ask for clarification
@@ -260,4 +298,4 @@ curl http://localhost:11434/api/tags
 - Export conversations to markdown/PDF
 - Custom ranking criteria (beyond accuracy/insight)
 - Backend caching for repeated queries
-- Conversation import/export
+- Multiple custom endpoints support
