@@ -1,141 +1,135 @@
-# AGENTS.md
+# PROJECT KNOWLEDGE BASE
 
-**Generated:** 2026-01-01T21:56:43  
-**Commit:** b04b983  
+**Generated:** 2026-01-01 22:00:00
 **Branch:** main
 
 ## OVERVIEW
-
-3-stage LLM council deliberation system. FastAPI backend (Python 3.10) + React 19 frontend. Models answer → peer-rank → chairman synthesizes.
+3-stage LLM council deliberation system. FastAPI backend (Python 3.10+) + React 19 frontend (Vite).
+Models answer individually (Stage 1) → peer-rank anonymously (Stage 2) → chairman synthesizes (Stage 3).
 
 ## USER CONTEXT
 
-**Owner is NOT a programmer.** This is a forked project from GitHub. AI agents should:
+**Owner is NOT a programmer.** This is a forked project. AI agents must follow these **STRICT** rules:
 
-| Behavior | Why |
-|----------|-----|
-| **Be proactive** | Don't wait for detailed instructions - anticipate needs |
-| **Provide complete solutions** | No partial code, no "implement X here" placeholders |
-| **Explain in simple terms** | Avoid jargon; when technical terms needed, explain briefly |
-| **Make technical decisions** | Owner trusts your judgment on implementation details |
-| **Test before declaring done** | Verify changes work; don't assume |
-| **Handle errors autonomously** | If something breaks, fix it without asking |
-| **Document changes** | Brief comments explaining what was changed and why |
+| Rule | Instruction | Why |
+|------|-------------|-----|
+| **NO PARTIAL CODE** | **NEVER** use `// ...`, `TODO`, or `<!-- rest of code -->`. | You cannot "fill in the blanks". Code must be copy-paste ready. |
+| **Fix It Yourself** | If a command fails, analyze the error and try to fix it **immediately**. | Do not stop to ask permission for standard fixes. |
+| **Verify & Prove** | After editing, run a quick check (e.g., `grep`, `ls`, or a test script). | Prove to the owner that your change was successful. |
+| **Explain "Why"** | Explain the *impact* of changes, not just the technical details. | Example: "I increased the timeout so large models won't fail," not "Set timeout to 60s." |
+| **Protect Data** | **NEVER** overwrite `data/` or `.env` files without checking. | Preserves the owner's API keys and settings. |
 
-**When in doubt**: Do more, not less. Complete the task fully rather than asking for clarification on technical details.
+**Golden Rule**: Treat this as a "Black Box" for the user. They care about the **result**, not the implementation.
 
-**Language**: ALWAYS use English in all responses and code comments, even if the user writes in Indonesian or other languages.
+**Language**: ALWAYS use English.
 
 ## STRUCTURE
-
 ```
 llm-council-plus/
-├── backend/              # FastAPI app, SSE streaming
-│   ├── providers/        # LLM provider implementations (9 providers)
-│   ├── council.py        # Stage orchestration, provider routing
-│   ├── main.py           # API endpoints, SSE event generator
-│   ├── search.py         # Web search (DDG/Tavily/Brave + Jina)
-│   ├── settings.py       # JSON-persisted config
-│   └── storage.py        # Conversation persistence
-├── frontend/src/
-│   ├── components/       # 22 components (flat structure)
-│   │   ├── Stage1.jsx    # Individual model responses (tabs)
-│   │   ├── Stage2.jsx    # Peer rankings + leaderboard
-│   │   ├── Stage3.jsx    # Chairman synthesis
-│   │   └── settings/     # Provider/Council/Prompt config
-│   ├── App.jsx           # SSE handling, conversation state
-│   └── api.js            # Backend client
+├── backend/              # FastAPI app (Port 8001), SSE streaming
+│   ├── providers/        # LLM implementations (OpenRouter, Ollama, etc.)
+│   ├── main.py           # Monolithic entry point (Routes + SSE)
+│   └── council.py        # Core deliberation logic
+├── frontend/             # React 19 + Vite
+│   └── src/
+│       ├── components/   # Flat UI components (22+ files)
+│       └── App.jsx       # "God Mode" state + SSE handler
 ├── data/                 # Runtime storage (git-ignored)
-│   ├── settings.json     # API keys (plaintext!)
-│   └── conversations/    # Chat history
-├── start.sh              # Launch script (backend + frontend)
-└── CLAUDE.md             # Detailed reference (read this)
+└── start.sh              # Unified launch script
 ```
 
 ## WHERE TO LOOK
-
 | Task | Location | Notes |
 |------|----------|-------|
-| Add new LLM provider | `backend/providers/` | Inherit `LLMProvider` from base.py, add to PROVIDERS dict in council.py |
-| Modify deliberation flow | `backend/council.py` | Stage 1/2/3 orchestration |
-| Change API routes | `backend/main.py` | All routes in single file |
-| Edit system prompts | `backend/prompts.py` | Stage 1/2/3 default prompts |
-| Add UI component | `frontend/src/components/` | CSS colocated with JSX |
-| Handle SSE events | `frontend/src/App.jsx` | Giant switch statement in handleSendMessage |
-| Modify model selection | `frontend/src/components/settings/CouncilConfig.jsx` | |
+| **Add LLM Provider** | `backend/providers/` | Inherit `LLMProvider`, add to `council.py` |
+| **Modify Logic** | `backend/council.py` | Stage 1/2/3 orchestration flow |
+| **Change API** | `backend/main.py` | All routes + SSE generator in one file |
+| **Edit UI** | `frontend/src/components/` | Styles colocated with JSX |
+| **Handle SSE** | `frontend/src/App.jsx` | Main event switch statement |
+| **Config/Keys** | `data/settings.json` | Plaintext storage (NEVER commit) |
 
 ## CONVENTIONS
-
 ### Backend (Python)
-- **Imports**: Relative ONLY (`from .config import ...`). Never `from backend.`
-- **Execution**: `uv run python -m backend.main` from root. Never `cd backend && python main.py`
-- **Port**: 8001 (NOT 8000)
+- **Execution**: `uv run python -m backend.main` (from root).
+- **Imports**: RELATIVE ONLY (`from .config import ...`).
+- **Port**: **8001** (8000 is reserved/conflict-prone).
+- **Search**: `yake` used for keyword extraction before querying.
 
 ### Frontend (React)
-- **State**: Immutable updates via spread operator. StrictMode runs effects twice.
-- **Markdown**: Wrap in `.markdown-content` div, ensure string type
-- **Tab bounds**: Check `activeTab < responses.length` during streaming
+- **State**: Immutable updates (`[...prev, new]`). StrictMode = double effects.
+- **Markdown**: Wrap in `<div className="markdown-content">`.
+- **Stream Safety**: Check `activeTab < responses.length`.
 
-### Model ID Format
-```
-prefix:model_name
-  openrouter:anthropic/claude-sonnet-4
-  ollama:llama3.1:latest
-  groq:llama3-70b-8192
-  openai:gpt-4.1
-  anthropic:claude-sonnet-4
-  custom:my-model
-```
-Routing: `council.py:get_provider_for_model()` parses prefix → dispatches to provider.
+### Model IDs
+Format: `prefix:model_name`
+- `openrouter:anthropic/claude-3`
+- `ollama:llama3`
+- `custom:my-model`
+- `groq:mixtral-8x7b`
 
-## ANTI-PATTERNS
-
-| NEVER | Why |
-|-------|-----|
-| Absolute imports in backend | Breaks module resolution |
-| `cd backend && python main.py` | Breaks relative imports |
-| Mutate React state directly | StrictMode issues, lost updates |
-| Use port 8000 | Reserved, causes conflicts |
-| Commit `data/` directory | Contains plaintext API keys |
-| Type suppress (`as any`, `@ts-ignore`) | Masks real errors |
+## ANTI-PATTERNS (DO NOT DO)
+1.  **Absolute Imports**: `from backend.x` breaks the module loading.
+2.  **Port 8000**: Will conflict. Use 8001.
+3.  **Partial Code**: Never leave `// ... implement here`. Write full solutions.
+4.  **Type Suppression**: No `as any` or `@ts-ignore`.
+5.  **Commit Data**: `data/` must remain git-ignored.
 
 ## COMMANDS
-
 ```bash
-# Start both (recommended)
+# Start All
 ./start.sh
 
-# Manual
-uv run python -m backend.main        # Backend: localhost:8001
-cd frontend && npm run dev           # Frontend: localhost:5173
+# Backend Only (Manual)
+uv run python -m backend.main
 
-# Install deps
-uv sync                              # Backend
-cd frontend && npm install           # Frontend
-
-# Test Ollama
-curl http://localhost:11434/api/tags
+# Frontend Only (Manual)
+cd frontend && npm run dev
 ```
 
-## GOTCHAS
+## DATA FLOW
+```
+User Query (+ optional web search)
+    ↓
+[Web Search: DuckDuckGo/Tavily/Brave + Jina Reader]
+    ↓
+Stage 1: Parallel queries → Stream individual responses
+    ↓
+Stage 2: Anonymize → Parallel peer rankings → Parse rankings
+    ↓
+Calculate aggregate rankings
+    ↓
+Stage 3: Chairman synthesis → Stream final answer
+    ↓
+Save conversation (stage1, stage2, stage3 only)
+```
 
-1. **Streaming abort**: Backend checks `request.is_disconnected()` inside loops. Inject raw `Request` object, not Pydantic model.
-2. **Stage 2 parsing**: Expects "FINAL RANKING:" header. Fallback regex for "Response X" patterns.
-3. **Icon detection order**: Check `custom:` prefix BEFORE name patterns (models may contain "claude", "gpt").
-4. **node_modules arch**: Delete and reinstall when switching Intel/Apple Silicon.
-5. **Jina 451 errors**: Many news sites block AI scrapers. Use Tavily/Brave or set full_content_results=0.
+## EXECUTION MODES
+- **Chat Only**: Stage 1 only (quick responses)
+- **Chat + Ranking**: Stages 1 & 2 (peer review without synthesis)
+- **Full Deliberation**: All 3 stages (default)
 
-## COMPLEXITY HOTSPOTS
+## WEB SEARCH
+- **Providers**: DuckDuckGo (free), Tavily (API), Brave (API)
+- **Full Content**: Jina Reader (`https://r.jina.ai/{url}`) fetches article text.
+- **Budget**: 25s timeout per article, 60s total. Falls back to summary if failed.
+- **Query Processing**: Uses `YAKE` to extract keywords from long prompts.
 
-| File | Lines | Notes |
-|------|-------|-------|
-| Settings.jsx | 1492 | 5-section settings UI |
-| backend/main.py | 951 | SSE event generator, all routes |
-| App.jsx | 705 | Central state, SSE handling |
-| council.py | 588 | Stage orchestration |
-| search.py | 527 | Multi-provider search + Jina |
+## TESTING & DEBUGGING
+```bash
+# Check Ollama models
+curl http://localhost:11434/api/tags
 
-## SEE ALSO
+# Test custom endpoint
+curl https://your-endpoint.com/v1/models -H "Authorization: Bearer $API_KEY"
+```
 
-- **CLAUDE.md**: Detailed architecture, implementation patterns, data flow diagrams
-- **README.md**: User-facing docs, feature list, setup guide
+## DESIGN PRINCIPLES
+- **Graceful Degradation**: Single model failure doesn't block the council.
+- **Transparency**: All raw outputs are inspectable.
+- **De-anonymization**: Models see "Response A", users see real names.
+- **Progress**: "X/Y completed" indicators during streaming.
+
+## NOTES
+- **Icons**: `custom:` prefix checked BEFORE name matching (avoids wrong logos).
+- **Jina Reader**: Used for full-text search. May 451 on news sites.
+- **Complexity**: `backend/main.py` (950+ lines) and `Settings.jsx` (1500+ lines) are huge.
