@@ -2,9 +2,9 @@
 
 **Created:** 2026-01-01  
 **Updated:** 2026-01-04  
-**Status:** Modified with Gap Fixes  
+**Status:** Modified with Critical Fixes  
 **Priority:** High  
-**Implementation Ready:** Yes (with fixes applied)
+**Implementation Ready:** Yes (CRITICAL fixes applied per analysis findings)
 
 ---
 
@@ -377,7 +377,13 @@ def _parse_error_response(self, response, model: str, name: str) -> dict:
 
 ### 2. Error Logger Module (`backend/error_logger.py`)
 
-New module for centralized error logging with fixes for gaps identified:
+New module for centralized error logging with CRITICAL async pattern fixes:
+
+**CRITICAL FIXES APPLIED:**
+1. File I/O uses `asyncio.to_thread()` for non-blocking writes (fixes blocking issue)
+2. Uses public `asyncio.get_running_loop()` instead of private `_get_running_loop()`
+3. Background task tracking to prevent silent failures
+4. Enhanced error handling for file operations
 
 ```python
 """Error logging for LLM Council Plus."""
@@ -398,6 +404,9 @@ _last_cleanup = None
 _file_lock = asyncio.Lock()
 _buffer_lock = asyncio.Lock()
 
+# Track background tasks for error handling
+_pending_cleanup_tasks = set()
+
 # Sensitive key patterns (comprehensive)
 SANITIZE_KEYS = {
     'api_key', 'apikey', 'api-key', 'api_key',
@@ -412,6 +421,12 @@ SANITIZE_KEYS = {
 
 # Fallback log file for when primary logging fails
 FALLBACK_LOG = Path("data/logs/fallback.log")
+
+
+def _append_to_file(path: Path, line: str) -> None:
+    """Helper function for synchronous file append (runs in thread pool)."""
+    with open(path, "a", encoding="utf-8") as f:
+        f.write(line)
 
 
 def _sanitize_dict(data: Dict[str, Any]) -> Dict[str, Any]:
@@ -481,10 +496,21 @@ def get_log_path() -> Path:
     except Exception as e:
         _log_to_fallback(f"Log rotation failed: {e}")
     
-    # Trigger cleanup opportunistically
-    asyncio.create_task(cleanup_old_logs())
+    # Trigger cleanup opportunistically (with error tracking)
+    task = asyncio.create_task(_safe_cleanup_old_logs())
+    if task:
+        _pending_cleanup_tasks.add(task)
+        task.add_done_callback(_pending_cleanup_tasks.discard)
     
     return folder / f"council_{today}.log"
+
+
+async def _safe_cleanup_old_logs() -> None:
+    """Wrapper for cleanup with error handling."""
+    try:
+        await cleanup_old_logs()
+    except Exception as e:
+        _log_to_fallback(f"Cleanup failed: {e}")
 
 
 def _log_to_fallback(message: str) -> None:
@@ -556,9 +582,8 @@ async def log_model_error(
     
     try:
         log_path = get_log_path()
-        async with _file_lock:
-            with open(log_path, "a", encoding="utf-8") as f:
-                f.write(log_line)
+        # CRITICAL FIX: Use asyncio.to_thread for non-blocking file I/O
+        await asyncio.to_thread(_append_to_file, log_path, log_line)
     except Exception as e:
         _log_to_fallback(f"Failed to write log: {e}")
 
@@ -598,9 +623,8 @@ async def log_event(
     
     try:
         log_path = get_log_path()
-        async with _file_lock:
-            with open(log_path, "a", encoding="utf-8") as f:
-                f.write(log_line)
+        # CRITICAL FIX: Use asyncio.to_thread for non-blocking file I/O
+        await asyncio.to_thread(_append_to_file, log_path, log_line)
     except Exception as e:
         _log_to_fallback(f"Failed to write log: {e}")
 
@@ -1099,6 +1123,10 @@ Add at END of file:
 
 ### 6. Integration Points
 
+**CRITICAL: Async Context Detection**
+
+The spec originally used `asyncio._get_running_loop()` which is a **PRIVATE API** (underscore prefix). This has been fixed to use the public API with proper error handling.
+
 #### 6.1 In `council.py` - Stage 1 Errors
 
 ```python
@@ -1112,9 +1140,19 @@ if response.get('error'):
     error_type = response.get('error_type', 'unknown_error')
     error_msg = response.get('error_message', 'Unknown error')
     
-    # Log asynchronously if in async context
-    if asyncio._get_running_loop():
+    # CRITICAL FIX: Use public API with try/except instead of private _get_running_loop()
+    try:
+        loop = asyncio.get_running_loop()
         asyncio.create_task(log_model_error(
+            model=model,
+            provider=provider_name,
+            error_type=error_type,
+            message=error_msg
+        ))
+    except RuntimeError:
+        # Not in async context, log synchronously
+        import asyncio as sync_asyncio
+        sync_asyncio.run(log_model_error(
             model=model,
             provider=provider_name,
             error_type=error_type,
@@ -1130,25 +1168,35 @@ from .error_logger import log_event
 import asyncio
 
 # Stage 1 complete
-if asyncio._get_running_loop():
+try:
+    asyncio.get_running_loop()
     asyncio.create_task(log_event("stage1_complete", {
         "total": len(models),
         "success": len([r for r in results if not r.get('error')]),
         "failed": len([r for r in results if r.get('error')])
     }))
+except RuntimeError:
+    # Not in async context (shouldn't happen in production, but safe fallback)
+    pass
 
 # Stage 2 complete
-if asyncio._get_running_loop():
+try:
+    asyncio.get_running_loop()
     asyncio.create_task(log_event("stage2_complete", {
         "rankings_received": len(stage2_results)
     }))
+except RuntimeError:
+    pass
 
 # Stage 3 complete
-if asyncio._get_running_loop():
+try:
+    asyncio.get_running_loop()
     asyncio.create_task(log_event("stage3_complete", {
         "chairman_model": chairman_model,
         "success": not result.get('error')
     }))
+except RuntimeError:
+    pass
 ```
 
 #### 6.3 Migration of Existing print() Statements
@@ -1800,7 +1848,11 @@ Check logs for API keys, tokens, etc.
 
 ## Change Log
 
-**2026-01-04 (Updated):**
+**2026-01-04 (Updated - Critical Fixes Applied):**
+- **CRITICAL FIX**: Replaced asyncio._get_running_loop() (private API) with asyncio.get_running_loop() + try/except
+- **CRITICAL FIX**: Replaced blocking file I/O with asyncio.to_thread() for non-blocking writes
+- **CRITICAL FIX**: Added _append_to_file() helper for thread pool execution
+- **CRITICAL FIX**: Added background task tracking to prevent silent cleanup failures
 - Fixed FR-6 compliance: Added size-based rotation (10MB max)
 - Added FR-8: Migration of existing debug logs
 - Enhanced NFR-2: Comprehensive sanitization (17 patterns vs 2)
@@ -1819,6 +1871,9 @@ Check logs for API keys, tokens, etc.
 - Integrated lazy imports to prevent circular deps
 - Added path traversal prevention
 - Updated success criteria to 12 items
+- **FIX NEEDED**: Note about duplicate line 401 in main.py (council_member_filters repeated)
+- **FIX NEEDED**: Note about council.py logger calls at lines 18, 46 requiring migration
+- **FIX NEEDED**: Note that error parsing should be extended to ALL providers, not just custom_openai.py
 
 **2026-01-01 (Original):**
 - Initial specification created
@@ -1828,4 +1883,11 @@ Check logs for API keys, tokens, etc.
 
 ---
 
-**Document Status:** ✅ Ready for Implementation (All gaps addressed)
+**Implementation Notes:**
+
+**⚠️ KNOWN issues to address during implementation:**
+1. main.py line 401: Duplicate `council_member_filters` field - remove one
+2. council.py lines 18, 46: Existing logger.warning/info calls need migration to new system
+3. error_logger.py: Apply to ALL provider files, not just custom_openai.py
+
+**Document Status:** ✅ Ready for Implementation (Critical async pattern fixes applied)

@@ -2,7 +2,9 @@
 
 This file contains ready-to-use prompts for AI agents to implement features from specification documents.
 
-**Target Spec:** `docs/spec-add-logs-feature.md`
+**Target Spec:** `docs/spec-add-logs-feature.md` (UPDATED 2026-01-04 with critical async pattern fixes)
+
+**File Status:** ✅ Ready for Implementation - All critical async issues fixed
 
 ---
 
@@ -12,7 +14,7 @@ Before implementing, the AI should read these files:
 
 | File | Purpose |
 |------|---------|
-| `docs/spec-add-logs-feature.md` | Full implementation spec with code snippets (1832 lines) |
+| `docs/spec-add-logs-feature.md` | Full implementation spec with code snippets (1894 lines) |
 | `CLAUDE.md` | Project architecture, conventions, gotchas |
 | `AGENTS.md` | Quick reference for structure and anti-patterns |
 
@@ -22,6 +24,11 @@ Before implementing, the AI should read these files:
 - Run backend: `uv run python -m backend.main` from project root
 - React state: Immutable updates via spread operator
 - Model ID format: `prefix:model_name` (e.g., `custom:gpt-4`, `ollama:llama3`)
+
+
+**CRITICAL:** Step 11 (Testing) requires manual UI interaction and NanoGPT setup - ONLY THE USER CAN PERFORM THIS STEP.
+
+
 
 ---
 
@@ -33,7 +40,7 @@ Use this when starting implementation from scratch (0% progress).
 Implement the logging feature based on the spec at docs/spec-add-logs-feature.md
 
 CONTEXT FILES TO READ FIRST:
-1. docs/spec-add-logs-feature.md - Full implementation spec with code snippets (1832 lines)
+1. docs/spec-add-logs-feature.md - Full implementation spec with code snippets (1894 lines)
 2. CLAUDE.md - Project architecture, conventions, critical implementation details
 3. AGENTS.md - Quick reference for structure and anti-patterns
 
@@ -44,37 +51,45 @@ WHAT THIS FEATURE DOES:
 - Size-based rotation (10MB max per file) and 7-day retention
 - Debug mode includes raw responses for troubleshooting
 - Migrates existing print() statements to unified logging
-- Comprehensive sanitization prevents logging API keys
+- Comprehensive sanitization prevents logging API keys (17 patterns)
 - UTC timestamps for consistency
-- Async-safe with file locking prevents corruption
+- Async-safe with asyncio.to_thread() for non-blocking file I/O
 - Fallback logging if primary logging fails
+- Background task tracking to prevent silent failures
 
 INSTRUCTIONS:
-1. Read the spec document COMPLETELY (all 1832 lines)
-2. Follow the Implementation Steps section (lines 1282-1631)
+1. Read the spec document COMPLETELY (all 1894 lines)
+2. Follow the Implementation Steps section (lines 1332-1700)
 3. Implement in order: Steps 0→1→2→3→4→5→6→7→8→9→10→11→12
 4. Update the Progress Tracker in the spec after each step (change ⬜ to ✅)
 5. Test backend compiles after Step 7: `uv run python -m backend.main`
-6. Test frontend compiles after Step 11: `cd frontend && npm run dev`
+6. Test frontend compiles after Step 10: `cd frontend && npm run dev`
 
 DO:
-- Use the exact code snippets from the spec's Technical Design section
+- Use the exact code snippets from the spec's Technical Design section (lines 378-1098)
 - Follow existing patterns in each file
 - Create data/logs/ folder if needed
-- Implement async operations with proper locking
-- Use UTC timezone for all timestamps
+- Implement async operations with asyncio.to_thread() for file I/O
+- Use UTC timezone for all timestamps (datetime.now(timezone.utc))
+- Use public API: asyncio.get_running_loop() with try/except RuntimeError
 
 DO NOT:
 - Skip steps or do them out of order (dependencies exist)
 - Use absolute imports in backend (use `from .module import ...`)
 - Commit API keys or log files
-- Use sync file operations (must be async with locks)
+- Use blocking file I/O (use asyncio.to_thread(), not async with locks)
 - Log sensitive data (sanitization is critical)
+- Use private APIs (asyncio._get_running_loop is private!)
 ```
 
 ---
 
 ## Continue Implementation Prompt
+
+
+**IMPORTANT:** Step 11 (Testing) is USER-ONLY and cannot be performed by AI agents. This step requires manual interaction with the web UI and NanoGPT configuration. You can mark it as ✅ in the spec after the user confirms completion.
+
+
 
 Use this when resuming work (some steps already completed).
 
@@ -82,7 +97,7 @@ Use this when resuming work (some steps already completed).
 Continue implementing the logging feature from docs/spec-add-logs-feature.md
 
 CONTEXT FILES:
-- docs/spec-add-logs-feature.md - Implementation spec (lines 1282-1631 have the steps)
+- docs/spec-add-logs-feature.md - Implementation spec (lines 1332-1700 have the steps)
 - CLAUDE.md - Project conventions (read "Critical Implementation Details" section)
 
 CURRENT PROGRESS (update before using):
@@ -109,7 +124,7 @@ INSTRUCTIONS:
 
 VERIFICATION CHECKPOINTS:
 - After Step 7: Run `uv run python -m backend.main` - should start without import errors
-- After Step 11: Run `cd frontend && npm run dev` - should compile without errors
+- After Step 10: Run `cd frontend && npm run dev` - should compile without errors
 - If either fails, STOP and fix the issue before proceeding
 
 CRITICAL DEPENDENCIES:
@@ -134,7 +149,7 @@ CONTEXT FILES TO READ:
 FIRST: Check current state by running these commands:
 1. `git status` - see what files were modified
 2. Check if backend/error_logger.py exists
-3. Check if backend/council.py has get_provider_name() function
+3. Check if backend/main.py has @app.get("/api/logs") endpoints
 4. Check if backend/main.py has @app.get("/api/logs/recent") endpoint
 5. Check if frontend/src/components/Settings.jsx has activeSection === 'logs' section
 6. Check if frontend/src/api.js has logToServer() function
@@ -192,11 +207,11 @@ AFTER DONE: Update spec Progress Tracker - change Step 0 status from ⬜ to ✅
 ```
 Implement Step 1 from docs/spec-add-logs-feature.md
 
-STEP 1: Create Error Logger Module
+STEP 1: Create Error Logger Module (CRITICAL - async pattern fixes applied)
 FILE: backend/error_logger.py (NEW FILE)
 TIME: 40 min
 
-TASKS (from spec lines 1314-1327):
+TASKS (from spec lines 1352-1376):
 1. Create new file backend/error_logger.py
 2. Add comprehensive sanitization constants (SANITIZE_KEYS with 17 patterns)
 3. Implement cleanup_old_logs() function (FR-7) - runs hourly
@@ -210,16 +225,25 @@ TASKS (from spec lines 1314-1327):
 11. Add _log_to_fallback() emergency logging
 12. Add async locks (_file_lock, _buffer_lock) for thread safety
 13. Use UTC timezone for all timestamps (NFR-4)
+14. Add _append_to_file() helper for thread pool execution
+15. Add _safe_cleanup_old_logs() wrapper with error handling
+16. Track background cleanup tasks (_pending_cleanup_tasks set)
+
+⚠️ CRITICAL PATTERN FIXES TO APPLY:
+- File I/O MUST use await asyncio.to_thread(_append_to_file, path, line) - NOT async with locks!
+- _append_to_file() helper runs in thread pool: def _append_to_file(path, line): with open(path, "a") as f: f.write(line)
+- Background cleanup: task = asyncio.create_task(_safe_cleanup_old_logs()); track with _pending_cleanup_tasks.add(task); task.add_done_callback(_pending_cleanup_tasks.discard)
 
 KEY FEATURES TO INCLUDE:
-- Async file operations with asyncio.Lock()
+- Non-blocking async file operations with asyncio.to_thread()
 - Size-based rotation (10MB → creates council_YYYY-MM-DD_N.log)
 - UTC timestamps (datetime.now(timezone.utc))
 - Comprehensive sanitization (17 key patterns)
 - Fallback logging to data/logs/fallback.log
 - In-memory buffer for recent errors (max 100)
+- Background task tracking to prevent silent failures
 
-REFERENCE: See spec lines 378-657 for exact code to use.
+REFERENCE: See spec lines 378-682 for exact code to use.
 
 VERIFICATION: File should be creatable without syntax errors.
 AFTER DONE: Update spec Progress Tracker - change Step 1 status from ⬜ to ✅
@@ -384,11 +408,11 @@ AFTER DONE: Update spec Progress Tracker - change Step 6 status from ⬜ to ✅
 ```
 Implement Step 7 from docs/spec-add-logs-feature.md
 
-STEP 7: Add Logging Calls to Council
+STEP 7: Add Logging Calls to Council (CRITICAL - async context fix applied)
 FILE: backend/council.py (MODIFY)
 TIME: 25 min
 
-TASKS (from spec lines 1473-1479):
+TASKS (from spec lines 1504-1528):
 1. Add lazy import: `from .error_logger import log_model_error, log_event`
 2. Add logging calls in stage1_collect_responses() for errors
 3. Add logging calls in stage2_collect_rankings() for errors
@@ -400,9 +424,27 @@ INTEGRATION POINTS:
 - Stage 1: After error result is built (around line 160-167)
 - Stage 2: After error result is built (around line 289-297)
 - Stage 3: When error occurs (around line 408-415)
-- Use asyncio.create_task() to log asynchronously if in async context
 
-REFERENCE: See spec lines 1100-1152 for exact integration code.
+⚠️ CRITICAL PATTERN FIX TO APPLY:
+Use public API with try/except, NOT private _get_running_loop():
+
+CORRECT PATTERN:
+```python
+try:
+    loop = asyncio.get_running_loop()
+    asyncio.create_task(log_model_error(...))
+except RuntimeError:
+    # Not in async context - safe fallback
+    pass
+```
+
+WRONG PATTERN (DO NOT USE):
+```python
+if asyncio._get_running_loop():  # PRIVATE API - will break!
+    asyncio.create_task(log_model_error(...))
+```
+
+REFERENCE: See spec lines 1124-1200 for exact integration code with proper async context handling.
 
 VERIFICATION: Run `uv run python -m backend.main` - should start with no errors.
 AFTER DONE: Update spec Progress Tracker - change Step 7 status from ⬜ to ✅
@@ -514,6 +556,12 @@ VERIFY: Run `cd frontend && npm run dev` - should compile without errors.
 AFTER DONE: Update spec Progress Tracker - change Step 10 status from ⬜ to ✅
 ```
 
+
+> **NOTE:** Step 11 is USER-ONLY manual testing. AI cannot perform this step.
+> A human must perform the testing procedures listed below.
+
+
+
 ### Step 11: Test with NanoGPT
 
 ```
@@ -530,10 +578,10 @@ TEST PROCEDURE (from spec lines 1588-1600):
 5. Enable logging, set level to "debug"
 6. Set up NanoGPT as custom endpoint (if available)
 7. Select 8 models including some that might fail
-8. Send a test message
+8. 9. [USER ACTION] Send a test message
 9. Check if errors appear in UI and log file
-10. Test file rotation by generating >10MB of logs
-11. Verify old files deleted after 7 days
+10. [USER ACTION] Test file rotation by generating >10MB of logs
+11. [USER ACTION] Verify old files deleted after 7 days
 12. Test with "errors_only" level (should hide INFO)
 
 VERIFICATION CHECKLIST (all must pass):
@@ -595,23 +643,29 @@ AFTER DONE: Update spec Progress Tracker - change Step 12 status from ⬜ to ✅
 
 ## Quick Reference
 
-| Step | File | What to Add | Time |
-|------|------|-------------|------|
-| 0 | Multiple | Audit existing logs | 20 min |
-| 1 | `backend/error_logger.py` | NEW FILE - logging module + async locks | 40 min |
-| 2 | `backend/providers/custom_openai.py` | `_parse_error_response()` method + name support | 35 min |
-| 3 | `backend/council.py` | `get_provider_name()` helper | 10 min |
-| 4 | `backend/settings.py` | 3 logging settings fields | 10 min |
-| 5 | `backend/main.py` | Replace 12 print() statements | 25 min |
-| 6 | `backend/main.py` | Settings + 4 API endpoints | 25 min |
-| 7 | `backend/council.py` | Import + logging calls in stages | 25 min |
-| 8 | `frontend/src/components/Settings.jsx` | Logs tab + UI + functions | 45 min |
-| 9 | `frontend/src/api.js` | 4 API functions (including logToServer) | 15 min |
-| 10 | `frontend/src/components/Settings.css` | Log viewer styles (monospace, colors) | 20 min |
-| 11 | - | Comprehensive testing (17 checks) | 30 min |
-| 12 | docs/ | User documentation + troubleshooting | 20 min |
+ | Step | File | What to Add | Time | Notes |
+ |------|------|-------------|------|
+ | 0 | Multiple | Audit existing logs | 20 min |
+ | 1 | `backend/error_logger.py` | NEW FILE - logging module + **CRITICAL async pattern fixes** | 40 min |
+ | 2 | `backend/providers/custom_openai.py` | `_parse_error_response()` method + name support | 35 min |
+ | 3 | `backend/council.py` | `get_provider_name()` helper | 10 min |
+ | 4 | `backend/settings.py` | 3 logging settings fields | 10 min |
+ | 5 | `backend/main.py` | Replace 12 print() statements | 25 min |
+ | 6 | `backend/main.py` | Settings + 4 API endpoints | 25 min |
+ | 7 | `backend/council.py` | Import + logging calls for errors + **CRITICAL async context fix** | 25 min |
+ | 8 | `frontend/src/components/Settings.jsx` | Logs tab + UI + functions | 45 min |
+ | 9 | `frontend/src/api.js` | 4 API functions (including logToServer) | 15 min |
+ | 10 | `frontend/src/components/Settings.css` | Log viewer styles (monospace, colors) | 20 min |
+ | 11 | - | Comprehensive testing | 30 min |
+ | 12 | docs/ | User documentation + troubleshooting | 20 min |
 
-**Total:** 4.7 hours | **Critical Path:** 1→2→3→7→8→11
+**Total:** 4.7 hours | **Critical Path:** 1→2→3→4→5→6→7→8→11
+
+**⚠️ CRITICAL PATTERN NOTES:**
+- Step 1: File I/O must use `asyncio.to_thread()` to avoid blocking async event loop
+- Step 7: Must use `asyncio.get_running_loop()` with try/except, NOT private `_get_running_loop()`
+- Must add background task tracking for cleanup operations
+- Fix main.py line 401 (duplicate council_member_filters)
 
 ---
 
@@ -619,7 +673,7 @@ AFTER DONE: Update spec Progress Tracker - change Step 12 status from ⬜ to ✅
 
 1. **Copy the entire prompt** including the code blocks
 2. **Update progress markers** [✅/⬜] before using Continue/Resume prompts
-3. **Always verify compilation** after backend (Step 7) and frontend (Step 11)
+3. **Always verify compilation** after backend (Step 7) and frontend (Step 10)
 4. **Check the spec file** if you need more details - it has full code snippets
 5. **Update the spec's Progress Tracker** after each step for future reference
 6. **Never skip pre-audit** (Step 0) when starting fresh
@@ -634,7 +688,7 @@ AFTER DONE: Update spec Progress Tracker - change Step 12 status from ⬜ to ✅
 | Backend won't start | Run from project root: `uv run python -m backend.main` | All backend verification |
 | Port 8000 conflict | Backend uses port **8001**, not 8000 | Backend testing |
 | React state bugs | Use spread operator for immutable updates | Step 8 |
-| CORS errors | Frontend must be on localhost:5173 or :3000 | Step 11 |
+| CORS errors | Frontend must be on localhost:5173 or :3000 | Step 10 |
 | Code deleted by edit | Never use `// ...` placeholders - always full content | All file edits |
 | **NEVER log API keys** | Sanitization happens automatically via _sanitize_dict() | All logging |
 | Circular imports | Use lazy imports inside functions for error_logger | Steps 2, 5, 6, 7 |
@@ -646,14 +700,73 @@ AFTER DONE: Update spec Progress Tracker - change Step 12 status from ⬜ to ✅
 | Frontend console clutter | Use logToServer() to send errors to backend logs | Step 9 |
 
 **Critical for this feature:**
-- **ASYNC EVERYWHERE**: File operations must use async with locks (see Step 1)
+- **ASYNC EVERYWHERE**: File operations must use `asyncio.to_thread()` for non-blocking writes (NOT async with locks - that's still blocking!)
+- **ASYNC CONTEXT DETECTION**: Must use `asyncio.get_running_loop()` with `try/except RuntimeError`, NOT private `_get_running_loop()`
+  - If not in async context (RuntimeError), use `asyncio.run()` or `import asyncio as sync_asyncio; sync_asyncio.run(log_model_error(...))`
 - **SANITIZATION**: 17 patterns automatically checked - never bypass
-- **UTC TIMESTAMPS**: All logs must use timezone.utc for consistency
+- **UTC TIMESTAMPS**: All logs must use `timezone.utc`, not naive datetime
 - **FALLBACK LOGGING**: If main logging fails, check data/logs/fallback.log
 - **SIZE ROTATION**: Check log file size before write, rotate if > 10MB
-- **CUSTOM ENDPOINT NAMES**: Use get_provider_name() to get correct name (Step 3)
+- **CUSTOM ENDPOINT NAMES**: Use `get_provider_name()` to get correct name (Step 3)
 - **DEBUG MODE**: Raw responses only logged when logging_level == "debug"
 - **STAGE EVENTS**: Log stage completions with structured data for analytics
+
+**⚠️ CRITICAL PATTERN WARNINGS (from analysis):**
+- **BLOCKING I/O**: Spec originally showed `async with _file_lock: with open()` which BLOCKS async event loop
+  - **FIX**: Must use `await asyncio.to_thread(_append_to_file, log_path, log_line)` instead
+  - **REASON**: `open()` is synchronous and will block the asyncio event loop
+- **PRIVATE API**: Spec originally used `asyncio._get_running_loop()` - this is a PRIVATE API (prefix)
+  - **FIX**: Use `asyncio.get_running_loop()` with `try/except RuntimeError` instead
+  - **REASON**: Private APIs are unsupported and may break in future Python versions
+- **BACKGROUND TASKS**: Must track background cleanup tasks to prevent silent failures
+- **DUPLICATE LINE**: main.py line 401 has duplicate `council_member_filters` field - remove one
+- **LOGGER MIGRATION**: council.py lines 18, 46 have existing logger.warning/info calls that need migration
+- **PROVIDER COVERAGE**: Error parsing in spec only applies to custom_openai.py. Consider extending to other providers (openai.py, ollama.py, etc.)
+
+---
+
+## Summary of Critical Fixes Applied
+
+The spec was updated on 2026-01-04 with critical async pattern fixes. When implementing, you MUST:
+
+### ✅ DO (Correct Patterns)
+
+1. **File I/O**: Always use `await asyncio.to_thread(_append_to_file, path, line)`
+   - This runs file operations in thread pool, not blocking async event loop
+   - Never use `async with _file_lock: with open()` pattern
+
+2. **Async Context Detection**: Always use `asyncio.get_running_loop()` with try/except
+   ```python
+   try:
+       loop = asyncio.get_running_loop()
+       asyncio.create_task(...)
+   except RuntimeError:
+       pass  # Not in async context
+   ```
+   - NEVER use `asyncio._get_running_loop()` (private API)
+
+3. **Background Task Tracking**: Track cleanup tasks to prevent silent failures
+   ```python
+   task = asyncio.create_task(_safe_cleanup_old_logs())
+   _pending_cleanup_tasks.add(task)
+   task.add_done_callback(_pending_cleanup_tasks.discard)
+   ```
+
+### ❌ DO NOT (Wrong Patterns - These Were in Original Spec and Fixed)
+
+1. ❌ `async with _file_lock: with open(path, "a") as f: f.write(line)`
+   - This **blocks** the async event loop! `open()` is synchronous
+
+2. ❌ `if asyncio._get_running_loop(): asyncio.create_task(...)`
+   - This uses a **private API** that will break in future Python versions
+
+### 📋 Additional Known Issues to Address
+
+When implementing, remember to fix these existing codebase issues:
+
+1. **main.py line 401**: Remove duplicate `council_member_filters` field
+2. **council.py lines 18, 46**: Migrate existing `logger.warning()` and `logger.info()` calls to new `log_event()` system
+3. **Provider Coverage**: Error parsing should apply to ALL providers, not just custom_openai.py
 
 ---
 
