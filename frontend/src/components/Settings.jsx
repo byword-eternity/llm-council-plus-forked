@@ -65,7 +65,17 @@ export default function Settings({ onClose, ollamaStatus, onRefreshOllama, initi
   const [isTestingBrave, setIsTestingBrave] = useState(false);
   const [tavilyTestResult, setTavilyTestResult] = useState(null);
   const [braveTestResult, setBraveTestResult] = useState(null);
-  const [showResetConfirm, setShowResetConfirm] = useState(false);
+const [showResetConfirm, setShowResetConfirm] = useState(false);
+
+  // Logging Settings
+  const [loggingEnabled, setLoggingEnabled] = useState(false);
+  const [loggingLevel, setLoggingLevel] = useState('errors_only');
+  const [loggingFolder, setLoggingFolder] = useState('data/logs');
+  const [recentErrors, setRecentErrors] = useState([]);
+  const [logFiles, setLogFiles] = useState([]);
+  const [selectedLogFile, setSelectedLogFile] = useState(null);
+  const [logFileContent, setLogFileContent] = useState('');
+  const [isFetchingLogs, setIsFetchingLogs] = useState(false);
 
   // Enabled Providers (which sources are available)
   const [enabledProviders, setEnabledProviders] = useState({
@@ -151,6 +161,11 @@ export default function Settings({ onClose, ollamaStatus, onRefreshOllama, initi
       if (prompts.stage2_prompt !== settings.stage2_prompt) return true;
       if (prompts.stage3_prompt !== settings.stage3_prompt) return true;
 
+      // Logging
+      if (loggingEnabled !== (settings.logging_enabled ?? false)) return true;
+      if (loggingLevel !== (settings.logging_level ?? 'errors_only')) return true;
+      if (loggingFolder !== (settings.logging_folder ?? 'data/logs')) return true;
+
       // Note: API keys are auto-saved on test, so we don't check them here
 
       return false;
@@ -172,7 +187,10 @@ export default function Settings({ onClose, ollamaStatus, onRefreshOllama, initi
     stage2Temperature,
     councilMemberFilters,
     chairmanFilter,
-    prompts
+    prompts,
+    loggingEnabled,
+    loggingLevel,
+    loggingFolder
   ]);
 
   // Helper to determine if filters need to switch based on availability
@@ -215,7 +233,14 @@ export default function Settings({ onClose, ollamaStatus, onRefreshOllama, initi
       setChairmanModel('');
     }
 
-  }, [enabledProviders, chairmanFilter]);
+}, [enabledProviders, chairmanFilter]);
+
+  // Load logs when logs section is active
+  useEffect(() => {
+    if (activeSection === 'logs') {
+      handleLoadLogs();
+    }
+  }, [activeSection, settings?.logging_enabled]);
 
   const loadSettings = async () => {
     try {
@@ -276,6 +301,11 @@ export default function Settings({ onClose, ollamaStatus, onRefreshOllama, initi
       }
       // Ollama Settings
       setOllamaBaseUrl(data.ollama_base_url || 'http://localhost:11434');
+
+      // Logging Settings
+      setLoggingEnabled(data.logging_enabled ?? false);
+      setLoggingLevel(data.logging_level || 'errors_only');
+      setLoggingFolder(data.logging_folder || 'data/logs');
 
       // Custom Endpoint Settings
       if (data.custom_endpoint_name) setCustomEndpointName(data.custom_endpoint_name);
@@ -1020,7 +1050,46 @@ export default function Settings({ onClose, ollamaStatus, onRefreshOllama, initi
     };
     reader.readAsText(file);
     // Reset input
-    event.target.value = '';
+event.target.value = '';
+  };
+
+  // Log handlers
+  const handleLoadLogs = async () => {
+    if (!settings?.logging_enabled) {
+      setRecentErrors([]);
+      setLogFiles([]);
+      return;
+    }
+    
+    try {
+      setIsFetchingLogs(true);
+      const [errorsData, filesData] = await Promise.all([
+        api.getRecentLogs(50),
+        api.getLogFiles()
+      ]);
+      setRecentErrors(errorsData.errors || []);
+      setLogFiles(filesData.files || []);
+    } catch (error) {
+      console.error('Failed to load logs:', error);
+    } finally {
+      setIsFetchingLogs(false);
+    }
+  };
+
+  const handleSelectLogFile = async (filename) => {
+    setSelectedLogFile(filename);
+    setLogFileContent('');
+    setIsFetchingLogs(true);
+    
+    try {
+      const result = await api.readLogFile(filename, 100);
+      setLogFileContent(result.content);
+    } catch (error) {
+      console.error('Failed to read log file:', error);
+      setLogFileContent('Failed to load log file');
+    } finally {
+      setIsFetchingLogs(false);
+    }
   };
 
   const handleSave = async () => {
@@ -1050,7 +1119,12 @@ export default function Settings({ onClose, ollamaStatus, onRefreshOllama, initi
         council_member_filters: councilMemberFilters,
         chairman_filter: chairmanFilter,
         // Prompts
-        ...prompts
+        ...prompts,
+        
+        // Logging
+        logging_enabled: loggingEnabled,
+        logging_level: loggingLevel,
+        logging_folder: loggingFolder
       };
 
       // Only send API keys if they've been changed
@@ -1243,6 +1317,13 @@ export default function Settings({ onClose, ollamaStatus, onRefreshOllama, initi
             >
               Backup & Reset
             </button>
+            <button
+              type="button"
+              className={`sidebar-nav-item ${activeSection === 'logs' ? 'active' : ''}`}
+              onClick={() => setActiveSection('logs')}
+            >
+              Logs
+            </button>
           </div>
 
           {/* Main Content Area */}
@@ -1423,6 +1504,121 @@ export default function Settings({ onClose, ollamaStatus, onRefreshOllama, initi
                     Reset to Defaults
                   </button>
                 </div>
+              </section>
+            )}
+
+            {/* LOGS SECTION */}
+            {activeSection === 'logs' && (
+              <section className="settings-section">
+                <h3>Logs</h3>
+                <p className="section-description">
+                  View and configure logging for troubleshooting and debugging.
+                </p>
+
+                <div className="subsection">
+                  <h4>Logging Configuration</h4>
+                  
+                  <div className="log-option">
+                    <label>
+                      <input
+                        type="checkbox"
+                        checked={loggingEnabled}
+                        onChange={(e) => setLoggingEnabled(e.target.checked)}
+                      />
+                      Enable Logging
+                    </label>
+                  </div>
+                  
+                  <div className="log-option">
+                    <label>Log Level</label>
+                    <select
+                      value={loggingLevel}
+                      onChange={(e) => setLoggingLevel(e.target.value)}
+                    >
+                      <option value="errors_only">Errors Only</option>
+                      <option value="all">All Events</option>
+                      <option value="debug">Debug (includes raw responses)</option>
+                    </select>
+                  </div>
+                  
+                  <div className="log-option">
+                    <label>Log Folder</label>
+                    <input
+                      type="text"
+                      value={loggingFolder}
+                      onChange={(e) => setLoggingFolder(e.target.value)}
+                      placeholder="data/logs"
+                    />
+                  </div>
+                </div>
+                
+                <div className="subsection" style={{ marginTop: '24px', paddingTop: '20px', borderTop: '1px solid rgba(255, 255, 255, 0.1)' }}>
+                  <h4>Recent Errors</h4>
+                  {recentErrors.length === 0 ? (
+                    <div className="no-logs">
+                      <div className="no-logs-icon">📋</div>
+                      <p>No recent errors logged</p>
+                    </div>
+                  ) : (
+                    <div className="recent-errors-list">
+                      {recentErrors.map((error, index) => (
+                        <div key={index} className="error-item">
+                          <div className="error-timestamp">{new Date(error.timestamp).toLocaleString()}</div>
+                          <div className="error-model">{error.model}</div>
+                          <div className="error-provider">{error.provider}</div>
+                          <span className={`error-type-badge ${error.error_type}`}>
+                            {error.error_type}
+                          </span>
+                          <div className="error-message">{error.message}</div>
+                        </div>
+                      ))}
+                    </div>
+                  )}
+                </div>
+                
+                <div className="subsection" style={{ marginTop: '24px', paddingTop: '20px', borderTop: '1px solid rgba(255, 255, 255, 0.1)' }}>
+                  <h4>Log Files</h4>
+                  {logFiles.length === 0 ? (
+                    <div className="no-logs">
+                      <div className="no-logs-icon">📁</div>
+                      <p>No log files found</p>
+                    </div>
+                  ) : (
+                    <div className="log-files-list">
+                      {logFiles.map((file, index) => (
+                        <div
+                          key={index}
+                          className={`log-file-item ${selectedLogFile === file.name ? 'log-file-active' : ''}`}
+                          onClick={() => handleSelectLogFile(file.name)}
+                        >
+                          <span className="log-file-name">{file.name}</span>
+                          <div className="log-file-meta">
+                            <span className="log-file-size">
+                              {(file.size / 1024).toFixed(1)} KB
+                            </span>
+                            <span className="log-file-date">
+                              {new Date(file.modified).toLocaleString()}
+                            </span>
+                          </div>
+                        </div>
+                      ))}
+                    </div>
+                  )}
+                </div>
+                
+                {selectedLogFile && (
+                  <div className="subsection" style={{ marginTop: '24px', paddingTop: '20px', borderTop: '1px solid rgba(255, 255, 255, 0.1)' }}>
+                    <h4>{selectedLogFile}</h4>
+                    {isFetchingLogs ? (
+                      <div className="loading-logs">
+                        <div className="loading-spinner"></div>
+                        <p>Loading log file...</p>
+                      </div>
+                    ) : (
+                      <pre className="log-content-pre">{logFileContent}</pre>
+                    )}
+                  </div>
+                )}
               </section>
             )}
 

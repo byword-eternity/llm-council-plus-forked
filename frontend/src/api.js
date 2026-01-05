@@ -324,7 +324,57 @@ export const api = {
         }
       }
     } finally {
-      reader.releaseLock();
+reader.releaseLock();
     }
+  },
+
+  /**
+   * Get recent error logs.
+   */
+  async getRecentLogs(limit = 50) {
+    const response = await fetch(`${API_BASE}/api/logs/recent?limit=${limit}`);
+    if (!response.ok) {
+      throw new Error('Failed to get recent logs');
+    }
+    return response.json();
+  },
+
+  /**
+   * Get list of log files.
+   */
+  async getLogFiles() {
+    const response = await fetch(`${API_BASE}/api/logs/files`);
+    if (!response.ok) {
+      throw new Error('Failed to get log files');
+    }
+    return response.json();
+  },
+
+  /**
+   * Read a specific log file.
+   */
+  async readLogFile(filename, lines = 100) {
+    const response = await fetch(`${API_BASE}/api/logs/file/${filename}?lines=${lines}`);
+    if (!response.ok) {
+      throw new Error('Failed to read log file');
+    }
+    return response.json();
+  },
+
+  /**
+   * Send log message from client.
+   */
+  async logFromClient(level, message, data = {}) {
+    const response = await fetch(`${API_BASE}/api/logs/client`, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+      },
+      body: JSON.stringify({ level, message, data }),
+    });
+    if (!response.ok) {
+      throw new Error('Failed to send log message');
+    }
+    return response.json();
   },
 };

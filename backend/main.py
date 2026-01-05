@@ -11,9 +11,25 @@ import json
 import asyncio
 
 from . import storage
-from .council import generate_conversation_title, generate_search_query, stage1_collect_responses, stage2_collect_rankings, stage3_synthesize_final, calculate_aggregate_rankings, PROVIDERS
+from .council import (
+    generate_conversation_title,
+    generate_search_query,
+    stage1_collect_responses,
+    stage2_collect_rankings,
+    stage3_synthesize_final,
+    calculate_aggregate_rankings,
+    PROVIDERS,
+)
 from .search import perform_web_search, SearchProvider
-from .settings import get_settings, update_settings, Settings, DEFAULT_COUNCIL_MODELS, DEFAULT_CHAIRMAN_MODEL, AVAILABLE_MODELS
+from .settings import (
+    get_settings,
+    update_settings,
+    Settings,
+    DEFAULT_COUNCIL_MODELS,
+    DEFAULT_CHAIRMAN_MODEL,
+    AVAILABLE_MODELS,
+)
+from .error_logger import log_event
 
 app = FastAPI(title="LLM Council Plus API")
 
@@ -29,11 +45,13 @@ app.add_middleware(
 
 class CreateConversationRequest(BaseModel):
     """Request to create a new conversation."""
+
     pass
 
 
 class SendMessageRequest(BaseModel):
     """Request to send a message in a conversation."""
+
     content: str
     web_search: bool = False
     execution_mode: str = "full"  # 'chat_only', 'chat_ranking', 'full'
@@ -41,6 +59,7 @@ class SendMessageRequest(BaseModel):
 
 class ConversationMetadata(BaseModel):
     """Conversation metadata for list view."""
+
     id: str
     created_at: str
     title: str
@@ -49,6 +68,7 @@ class ConversationMetadata(BaseModel):
 
 class Conversation(BaseModel):
     """Full conversation with all messages."""
+
     id: str
     created_at: str
     title: str
@@ -94,16 +114,18 @@ async def delete_conversation(conversation_id: str):
 
 
 @app.post("/api/conversations/{conversation_id}/message/stream")
-async def send_message_stream(conversation_id: str, body: SendMessageRequest, request: Request):
+async def send_message_stream(
+    conversation_id: str, body: SendMessageRequest, request: Request
+):
     """Send a message and stream the 3-stage council process."""
     # Validate execution_mode
     valid_modes = ["chat_only", "chat_ranking", "full"]
     if body.execution_mode not in valid_modes:
         raise HTTPException(
             status_code=400,
-            detail=f"Invalid execution_mode. Must be one of: {valid_modes}"
+            detail=f"Invalid execution_mode. Must be one of: {valid_modes}",
         )
-    
+
     # Check if conversation exists
     conversation = storage.get_conversation(conversation_id)
     if conversation is None:
@@ -120,14 +142,16 @@ async def send_message_stream(conversation_id: str, body: SendMessageRequest, re
             stage3_result = None
             label_to_model = {}
             aggregate_rankings = {}
-            
+
             # Add user message
             storage.add_user_message(conversation_id, body.content)
 
             # Start title generation in parallel (don't await yet)
             title_task = None
             if is_first_message:
-                title_task = asyncio.create_task(generate_conversation_title(body.content))
+                title_task = asyncio.create_task(
+                    generate_conversation_title(body.content)
+                )
 
             # Perform web search if requested
             search_context = ""
@@ -135,7 +159,11 @@ async def send_message_stream(conversation_id: str, body: SendMessageRequest, re
             if body.web_search:
                 # Check for disconnect before starting search
                 if await request.is_disconnected():
-                    print("Client disconnected before web search")
+                    await log_event(
+                        "client_disconnect",
+                        {"stage": "web_search", "reason": "disconnected"},
+                        level="WARN",
+                    )
                     raise asyncio.CancelledError("Client disconnected")
 
                 settings = get_settings()
@@ -151,7 +179,11 @@ async def send_message_stream(conversation_id: str, body: SendMessageRequest, re
 
                 # Check for disconnect before generating search query
                 if await request.is_disconnected():
-                    print("Client disconnected during search setup")
+                    await log_event(
+                        "client_disconnect",
+                        {"stage": "search_setup", "reason": "disconnected"},
+                        level="WARN",
+                    )
                     raise asyncio.CancelledError("Client disconnected")
 
                 # Generate search query (passthrough - no AI model needed)
@@ -159,16 +191,20 @@ async def send_message_stream(conversation_id: str, body: SendMessageRequest, re
 
                 # Check for disconnect before performing search
                 if await request.is_disconnected():
-                    print("Client disconnected before search execution")
+                    await log_event(
+                        "client_disconnect",
+                        {"stage": "search_execution", "reason": "disconnected"},
+                        level="WARN",
+                    )
                     raise asyncio.CancelledError("Client disconnected")
 
                 # Run search (now fully async for Tavily/Brave, threaded only for DuckDuckGo)
                 search_result = await perform_web_search(
-                    search_query, 
-                    5, 
-                    provider, 
+                    search_query,
+                    5,
+                    provider,
                     settings.full_content_results,
-                    settings.search_keyword_extraction
+                    settings.search_keyword_extraction,
                 )
                 search_context = search_result["results"]
                 extracted_query = search_result["extracted_query"]
@@ -178,53 +214,88 @@ async def send_message_stream(conversation_id: str, body: SendMessageRequest, re
             # Stage 1: Collect responses
             yield f"data: {json.dumps({'type': 'stage1_start'})}\n\n"
             await asyncio.sleep(0.05)
-            
+
             total_models = 0
-            
-            async for item in stage1_collect_responses(body.content, search_context, request):
+
+            async for item in stage1_collect_responses(
+                body.content, search_context, request
+            ):
                 if isinstance(item, int):
                     total_models = item
-                    print(f"DEBUG: Sending stage1_init with total={total_models}")
+                    await log_event(
+                        "stage1_init",
+                        {
+                            "total_models": total_models,
+                            "query_preview": body.content[:100] + "..."
+                            if len(body.content) > 100
+                            else body.content,
+                            "search_enabled": body.web_search,
+                        },
+                        level="INFO",
+                    )
                     yield f"data: {json.dumps({'type': 'stage1_init', 'total': total_models})}\n\n"
                     continue
-                
+
                 stage1_results.append(item)
                 yield f"data: {json.dumps({'type': 'stage1_progress', 'data': item, 'count': len(stage1_results), 'total': total_models})}\n\n"
                 await asyncio.sleep(0.01)
 
+            # Calculate success/failure stats for Stage 1
+            stage1_success = len([r for r in stage1_results if not r.get("error")])
+            stage1_failed = len([r for r in stage1_results if r.get("error")])
+            await log_event(
+                "stage1_complete",
+                {
+                    "total": len(stage1_results),
+                    "success": stage1_success,
+                    "failed": stage1_failed,
+                },
+                level="INFO",
+            )
             yield f"data: {json.dumps({'type': 'stage1_complete', 'data': stage1_results})}\n\n"
             await asyncio.sleep(0.05)
 
             # Check if any models responded successfully in Stage 1
-            if not any(r for r in stage1_results if not r.get('error')):
-                error_msg = 'All models failed to respond in Stage 1, likely due to rate limits or API errors. Please try again or adjust your model selection.'
+            if not any(r for r in stage1_results if not r.get("error")):
+                error_msg = "All models failed to respond in Stage 1, likely due to rate limits or API errors. Please try again or adjust your model selection."
                 storage.add_error_message(conversation_id, error_msg)
                 yield f"data: {json.dumps({'type': 'error', 'message': error_msg})}\n\n"
-                return # Stop further processing
+                return  # Stop further processing
 
             # Stage 2: Only if mode is 'chat_ranking' or 'full'
             if body.execution_mode in ["chat_ranking", "full"]:
                 yield f"data: {json.dumps({'type': 'stage2_start'})}\n\n"
                 await asyncio.sleep(0.05)
-                
+
                 # Iterate over the async generator
-                async for item in stage2_collect_rankings(body.content, stage1_results, search_context, request):
+                async for item in stage2_collect_rankings(
+                    body.content, stage1_results, search_context, request
+                ):
                     # First item is the label mapping
-                    if isinstance(item, dict) and not item.get('model'):
+                    if isinstance(item, dict) and not item.get("model"):
                         label_to_model = item
                         # Send init event with total count
                         yield f"data: {json.dumps({'type': 'stage2_init', 'total': len(label_to_model)})}\n\n"
                         continue
-                    
+
                     # Subsequent items are results
                     stage2_results.append(item)
-                    
+
                     # Send progress update
-                    print(f"Stage 2 Progress: {len(stage2_results)}/{len(label_to_model)} - {item['model']}")
+                    await log_event(
+                        "stage2_progress",
+                        {
+                            "progress": f"{len(stage2_results)}/{len(label_to_model)}",
+                            "model": item["model"],
+                        },
+                        level="INFO",
+                    )
                     yield f"data: {json.dumps({'type': 'stage2_progress', 'data': item, 'count': len(stage2_results), 'total': len(label_to_model)})}\n\n"
                     await asyncio.sleep(0.01)
 
-                aggregate_rankings = calculate_aggregate_rankings(stage2_results, label_to_model)
+                aggregate_rankings = calculate_aggregate_rankings(
+                    stage2_results, label_to_model
+                )
                 yield f"data: {json.dumps({'type': 'stage2_complete', 'data': stage2_results, 'metadata': {'label_to_model': label_to_model, 'aggregate_rankings': aggregate_rankings, 'search_query': search_query, 'search_context': search_context}})}\n\n"
                 await asyncio.sleep(0.05)
 
@@ -235,10 +306,26 @@ async def send_message_stream(conversation_id: str, body: SendMessageRequest, re
 
                 # Check for disconnect before starting Stage 3
                 if await request.is_disconnected():
-                    print("Client disconnected before Stage 3")
+                    await log_event(
+                        "client_disconnect",
+                        {"stage": "stage3", "reason": "disconnected"},
+                        level="WARN",
+                    )
                     raise asyncio.CancelledError("Client disconnected")
 
-                stage3_result = await stage3_synthesize_final(body.content, stage1_results, stage2_results, search_context)
+                stage3_result = await stage3_synthesize_final(
+                    body.content, stage1_results, stage2_results, search_context
+                )
+                # Log stage3 completion
+                await log_event(
+                    "stage3_complete",
+                    {
+                        "success": not stage3_result.get("error"),
+                        "chairman_model": stage3_result.get("model", "unknown"),
+                        "response_length": len(stage3_result.get("response", "") or ""),
+                    },
+                    level="INFO",
+                )
                 yield f"data: {json.dumps({'type': 'stage3_complete', 'data': stage3_result})}\n\n"
 
             # Wait for title generation if it was started
@@ -248,18 +335,18 @@ async def send_message_stream(conversation_id: str, body: SendMessageRequest, re
                     storage.update_conversation_title(conversation_id, title)
                     yield f"data: {json.dumps({'type': 'title_complete', 'data': {'title': title}})}\n\n"
                 except Exception as e:
-                    print(f"Error waiting for title task: {e}")
+                    await log_event("title_error", {"error": str(e)}, level="ERROR")
 
             # Save complete assistant message with metadata
             metadata = {
                 "execution_mode": body.execution_mode,  # Save mode for historical context
             }
-            
+
             # Only include stage2/stage3 metadata if they were executed
             if body.execution_mode in ["chat_ranking", "full"]:
                 metadata["label_to_model"] = label_to_model
                 metadata["aggregate_rankings"] = aggregate_rankings
-            
+
             if search_context:
                 metadata["search_context"] = search_context
             if search_query:
@@ -268,28 +355,36 @@ async def send_message_stream(conversation_id: str, body: SendMessageRequest, re
             storage.add_assistant_message(
                 conversation_id,
                 stage1_results,
-                stage2_results if body.execution_mode in ["chat_ranking", "full"] else None,
+                stage2_results
+                if body.execution_mode in ["chat_ranking", "full"]
+                else None,
                 stage3_result if body.execution_mode == "full" else None,
-                metadata
+                metadata,
             )
 
             # Send completion event
             yield f"data: {json.dumps({'type': 'complete'})}\n\n"
 
         except asyncio.CancelledError:
-            print(f"Stream cancelled for conversation {conversation_id}")
+            await log_event(
+                "stream_cancelled", {"conversation_id": conversation_id}, level="INFO"
+            )
             # Even if cancelled, try to save the title if it's ready or nearly ready
             if title_task:
                 try:
                     # Give it a small grace period to finish if it's close
                     title = await asyncio.wait_for(title_task, timeout=2.0)
                     storage.update_conversation_title(conversation_id, title)
-                    print(f"Saved title despite cancellation: {title}")
+                    await log_event(
+                        "title_saved",
+                        {"title": title, "despite_cancellation": True},
+                        level="INFO",
+                    )
                 except Exception as e:
-                    print(f"Could not save title during cancellation: {e}")
+                    await log_event("title_save_error", {"error": str(e)}, level="WARN")
             raise
         except Exception as e:
-            print(f"Stream error: {e}")
+            await log_event("stream_error", {"error": str(e)}, level="ERROR")
             # Save error to conversation history
             storage.add_error_message(conversation_id, f"Error: {str(e)}")
             # Send error event
@@ -301,12 +396,13 @@ async def send_message_stream(conversation_id: str, body: SendMessageRequest, re
         headers={
             "Cache-Control": "no-cache",
             "Connection": "keep-alive",
-        }
+        },
     )
 
 
 class UpdateSettingsRequest(BaseModel):
     """Request to update settings."""
+
     search_provider: Optional[str] = None
     search_keyword_extraction: Optional[str] = None
     ollama_base_url: Optional[str] = None
@@ -335,7 +431,7 @@ class UpdateSettingsRequest(BaseModel):
     # Council Configuration (unified)
     council_models: Optional[List[str]] = None
     chairman_model: Optional[str] = None
-    
+
     # Remote/Local filters
     council_member_filters: Optional[Dict[int, str]] = None
     chairman_filter: Optional[str] = None
@@ -354,10 +450,15 @@ class UpdateSettingsRequest(BaseModel):
     stage2_prompt: Optional[str] = None
     stage3_prompt: Optional[str] = None
 
+    # Logging Settings
+    logging_enabled: Optional[bool] = None
+    logging_level: Optional[str] = None
+    logging_folder: Optional[str] = None
 
 
 class TestTavilyRequest(BaseModel):
     """Request to test Tavily API key."""
+
     api_key: str | None = None
 
 
@@ -370,12 +471,10 @@ async def get_app_settings():
         "search_keyword_extraction": settings.search_keyword_extraction,
         "ollama_base_url": settings.ollama_base_url,
         "full_content_results": settings.full_content_results,
-
         # Custom Endpoint
         "custom_endpoint_name": settings.custom_endpoint_name,
         "custom_endpoint_url": settings.custom_endpoint_url,
         # Don't send the API key to frontend for security
-
         # API Key Status
         "tavily_api_key_set": bool(settings.tavily_api_key),
         "brave_api_key_set": bool(settings.brave_api_key),
@@ -387,32 +486,29 @@ async def get_app_settings():
         "deepseek_api_key_set": bool(settings.deepseek_api_key),
         "groq_api_key_set": bool(settings.groq_api_key),
         "custom_endpoint_api_key_set": bool(settings.custom_endpoint_api_key),
-
         # Enabled Providers
         "enabled_providers": settings.enabled_providers,
         "direct_provider_toggles": settings.direct_provider_toggles,
-
         # Council Configuration (unified)
         "council_models": settings.council_models,
         "chairman_model": settings.chairman_model,
-        
         # Remote/Local filters
-        "council_member_filters": settings.council_member_filters,
         "council_member_filters": settings.council_member_filters,
         "chairman_filter": settings.chairman_filter,
         "search_query_filter": settings.search_query_filter,
-
         # Temperature Settings
         "council_temperature": settings.council_temperature,
         "chairman_temperature": settings.chairman_temperature,
         "stage2_temperature": settings.stage2_temperature,
-
         # Prompts
         "stage1_prompt": settings.stage1_prompt,
         "stage2_prompt": settings.stage2_prompt,
         "stage3_prompt": settings.stage3_prompt,
+        # Logging Settings
+        "logging_enabled": settings.logging_enabled,
+        "logging_level": settings.logging_level,
+        "logging_folder": settings.logging_folder,
     }
-
 
 
 @app.get("/api/settings/defaults")
@@ -422,9 +518,10 @@ async def get_default_settings():
         STAGE1_PROMPT_DEFAULT,
         STAGE2_PROMPT_DEFAULT,
         STAGE3_PROMPT_DEFAULT,
-        TITLE_PROMPT_DEFAULT
+        TITLE_PROMPT_DEFAULT,
     )
     from .settings import DEFAULT_ENABLED_PROVIDERS
+
     return {
         "council_models": DEFAULT_COUNCIL_MODELS,
         "chairman_model": DEFAULT_CHAIRMAN_MODEL,
@@ -448,14 +545,14 @@ async def update_app_settings(request: UpdateSettingsRequest):
         except ValueError:
             raise HTTPException(
                 status_code=400,
-                detail=f"Invalid search provider. Must be one of: {[p.value for p in SearchProvider]}"
+                detail=f"Invalid search provider. Must be one of: {[p.value for p in SearchProvider]}",
             )
 
     if request.search_keyword_extraction is not None:
         if request.search_keyword_extraction not in ["direct", "yake"]:
-             raise HTTPException(
+            raise HTTPException(
                 status_code=400,
-                detail="Invalid keyword extraction mode. Must be 'direct' or 'yake'"
+                detail="Invalid keyword extraction mode. Must be 'direct' or 'yake'",
             )
         updates["search_keyword_extraction"] = request.search_keyword_extraction
 
@@ -474,8 +571,7 @@ async def update_app_settings(request: UpdateSettingsRequest):
         # Validate range
         if request.full_content_results < 0 or request.full_content_results > 10:
             raise HTTPException(
-                status_code=400,
-                detail="full_content_results must be between 0 and 10"
+                status_code=400, detail="full_content_results must be between 0 and 10"
             )
         updates["full_content_results"] = request.full_content_results
 
@@ -501,7 +597,7 @@ async def update_app_settings(request: UpdateSettingsRequest):
 
     if request.openrouter_api_key is not None:
         updates["openrouter_api_key"] = request.openrouter_api_key
-        
+
     # Direct Provider Keys
     if request.openai_api_key is not None:
         updates["openai_api_key"] = request.openai_api_key
@@ -528,19 +624,17 @@ async def update_app_settings(request: UpdateSettingsRequest):
         # Validate that at least two models are selected
         if len(request.council_models) < 2:
             raise HTTPException(
-                status_code=400,
-                detail="At least two council models must be selected"
+                status_code=400, detail="At least two council models must be selected"
             )
         if len(request.council_models) > 8:
             raise HTTPException(
-                status_code=400,
-                detail="Maximum of 8 council models allowed"
+                status_code=400, detail="Maximum of 8 council models allowed"
             )
         updates["council_models"] = request.council_models
 
     if request.chairman_model is not None:
         updates["chairman_model"] = request.chairman_model
-        
+
     # Remote/Local filters
     if request.council_member_filters is not None:
         updates["council_member_filters"] = request.council_member_filters
@@ -557,15 +651,29 @@ async def update_app_settings(request: UpdateSettingsRequest):
     if request.stage2_temperature is not None:
         updates["stage2_temperature"] = request.stage2_temperature
 
-    # Prompts   # Execution Mode
+    # Execution Mode
     if request.execution_mode is not None:
         valid_modes = ["chat_only", "chat_ranking", "full"]
         if request.execution_mode not in valid_modes:
             raise HTTPException(
                 status_code=400,
-                detail=f"Invalid execution_mode. Must be one of: {valid_modes}"
+                detail=f"Invalid execution_mode. Must be one of: {valid_modes}",
             )
         updates["execution_mode"] = request.execution_mode
+
+    # Logging Settings
+    if request.logging_enabled is not None:
+        updates["logging_enabled"] = request.logging_enabled
+    if request.logging_level is not None:
+        # Validate log level
+        if request.logging_level not in ["all", "errors_only", "debug"]:
+            raise HTTPException(
+                status_code=400,
+                detail="Invalid logging level. Must be 'all', 'errors_only', or 'debug'",
+            )
+        updates["logging_level"] = request.logging_level
+    if request.logging_folder is not None:
+        updates["logging_folder"] = request.logging_folder
 
     if updates:
         settings = update_settings(**updates)
@@ -577,11 +685,9 @@ async def update_app_settings(request: UpdateSettingsRequest):
         "search_keyword_extraction": settings.search_keyword_extraction,
         "ollama_base_url": settings.ollama_base_url,
         "full_content_results": settings.full_content_results,
-
         # Custom Endpoint
         "custom_endpoint_name": settings.custom_endpoint_name,
         "custom_endpoint_url": settings.custom_endpoint_url,
-
         # API Key Status
         "tavily_api_key_set": bool(settings.tavily_api_key),
         "brave_api_key_set": bool(settings.brave_api_key),
@@ -593,19 +699,15 @@ async def update_app_settings(request: UpdateSettingsRequest):
         "deepseek_api_key_set": bool(settings.deepseek_api_key),
         "groq_api_key_set": bool(settings.groq_api_key),
         "custom_endpoint_api_key_set": bool(settings.custom_endpoint_api_key),
-
         # Enabled Providers
         "enabled_providers": settings.enabled_providers,
         "direct_provider_toggles": settings.direct_provider_toggles,
-
         # Council Configuration (unified)
         "council_models": settings.council_models,
         "chairman_model": settings.chairman_model,
-
         # Remote/Local filters
         "council_member_filters": settings.council_member_filters,
         "chairman_filter": settings.chairman_filter,
-
         # Prompts
         "stage1_prompt": settings.stage1_prompt,
         "stage2_prompt": settings.stage2_prompt,
@@ -617,12 +719,12 @@ async def update_app_settings(request: UpdateSettingsRequest):
 async def get_models():
     """Get available models for council selection."""
     from .openrouter import fetch_models
-    
+
     # Try dynamic fetch first
     dynamic_models = await fetch_models()
     if dynamic_models:
         return {"models": dynamic_models}
-        
+
     # Fallback to static list
     return {"models": AVAILABLE_MODELS}
 
@@ -631,20 +733,24 @@ async def get_models():
 async def get_direct_models():
     """Get available models from all configured direct providers."""
     all_models = []
-    
+
     # Iterate over all providers
     for provider_id, provider in PROVIDERS.items():
         # Skip OpenRouter and Ollama as they are handled separately
         if provider_id in ["openrouter", "ollama", "hybrid"]:
             continue
-            
+
         try:
             # Fetch models from provider
             models = await provider.get_models()
             all_models.extend(models)
         except Exception as e:
-            print(f"Error fetching models for {provider_id}: {e}")
-            
+            await log_event(
+                "model_fetch_error",
+                {"provider": provider_id, "error": str(e)},
+                level="ERROR",
+            )
+
     return all_models
 
 
@@ -652,6 +758,7 @@ async def get_direct_models():
 async def test_tavily_api(request: TestTavilyRequest):
     """Test Tavily API key with a simple search."""
     import httpx
+
     settings = get_settings()
 
     try:
@@ -671,7 +778,10 @@ async def test_tavily_api(request: TestTavilyRequest):
             elif response.status_code == 401:
                 return {"success": False, "message": "Invalid API key"}
             else:
-                return {"success": False, "message": f"API error: {response.status_code}"}
+                return {
+                    "success": False,
+                    "message": f"API error: {response.status_code}",
+                }
 
     except httpx.TimeoutException:
         return {"success": False, "message": "Request timed out"}
@@ -681,6 +791,7 @@ async def test_tavily_api(request: TestTavilyRequest):
 
 class TestBraveRequest(BaseModel):
     """Request to test Brave API key."""
+
     api_key: str | None = None
 
 
@@ -688,6 +799,7 @@ class TestBraveRequest(BaseModel):
 async def test_brave_api(request: TestBraveRequest):
     """Test Brave API key with a simple search."""
     import httpx
+
     settings = get_settings()
 
     try:
@@ -707,7 +819,10 @@ async def test_brave_api(request: TestBraveRequest):
             elif response.status_code == 401 or response.status_code == 403:
                 return {"success": False, "message": "Invalid API key"}
             else:
-                return {"success": False, "message": f"API error: {response.status_code}"}
+                return {
+                    "success": False,
+                    "message": f"API error: {response.status_code}",
+                }
 
     except httpx.TimeoutException:
         return {"success": False, "message": "Request timed out"}
@@ -717,11 +832,13 @@ async def test_brave_api(request: TestBraveRequest):
 
 class TestOpenRouterRequest(BaseModel):
     """Request to test OpenRouter API key."""
+
     api_key: Optional[str] = None
 
 
 class TestProviderRequest(BaseModel):
     """Request to test a specific provider's API key."""
+
     provider_id: str
     api_key: str
 
@@ -731,10 +848,10 @@ async def test_provider_api(request: TestProviderRequest):
     """Test an API key for a specific provider."""
     from .council import PROVIDERS
     from .settings import get_settings
-    
+
     if request.provider_id not in PROVIDERS:
         raise HTTPException(status_code=400, detail="Invalid provider ID")
-        
+
     api_key = request.api_key
     if not api_key:
         # Try to get from settings
@@ -742,10 +859,10 @@ async def test_provider_api(request: TestProviderRequest):
         # Map provider_id to setting key (e.g. 'openai' -> 'openai_api_key')
         setting_key = f"{request.provider_id}_api_key"
         if hasattr(settings, setting_key):
-             api_key = getattr(settings, setting_key)
-    
+            api_key = getattr(settings, setting_key)
+
     if not api_key:
-         return {"success": False, "message": "No API key provided or configured"}
+        return {"success": False, "message": "No API key provided or configured"}
 
     provider = PROVIDERS[request.provider_id]
     return await provider.validate_key(api_key)
@@ -753,6 +870,7 @@ async def test_provider_api(request: TestProviderRequest):
 
 class TestOllamaRequest(BaseModel):
     """Request to test Ollama connection."""
+
     base_url: str
 
 
@@ -761,36 +879,41 @@ async def get_ollama_tags(base_url: Optional[str] = None):
     """Fetch available models from Ollama."""
     import httpx
     from .config import get_ollama_base_url
-    
+
     if not base_url:
         base_url = get_ollama_base_url()
-        
-    if base_url.endswith('/'):
+
+    if base_url.endswith("/"):
         base_url = base_url[:-1]
-        
+
     try:
         async with httpx.AsyncClient(timeout=10.0) as client:
             response = await client.get(f"{base_url}/api/tags")
-            
+
             if response.status_code != 200:
-                return {"models": [], "error": f"Ollama API error: {response.status_code}"}
-                
+                return {
+                    "models": [],
+                    "error": f"Ollama API error: {response.status_code}",
+                }
+
             data = response.json()
             models = []
             for model in data.get("models", []):
-                models.append({
-                    "id": model.get("name"),
-                    "name": model.get("name"),
-                    # Ollama doesn't return context length in tags
-                    "context_length": None,
-                    "is_free": True,
-                    "modified_at": model.get("modified_at")
-                })
-                
+                models.append(
+                    {
+                        "id": model.get("name"),
+                        "name": model.get("name"),
+                        # Ollama doesn't return context length in tags
+                        "context_length": None,
+                        "is_free": True,
+                        "modified_at": model.get("modified_at"),
+                    }
+                )
+
             # Sort by modified_at (newest first), fallback to name
             models.sort(key=lambda x: x.get("modified_at", ""), reverse=True)
             return {"models": models}
-            
+
     except httpx.ConnectError:
         return {"models": [], "error": "Could not connect to Ollama. Is it running?"}
     except Exception as e:
@@ -801,28 +924,35 @@ async def get_ollama_tags(base_url: Optional[str] = None):
 async def test_ollama_connection(request: TestOllamaRequest):
     """Test connection to Ollama instance."""
     import httpx
-    
+
     base_url = request.base_url
-    if base_url.endswith('/'):
+    if base_url.endswith("/"):
         base_url = base_url[:-1]
-        
+
     try:
         async with httpx.AsyncClient(timeout=5.0) as client:
             response = await client.get(f"{base_url}/api/tags")
-            
+
             if response.status_code == 200:
                 return {"success": True, "message": "Successfully connected to Ollama"}
             else:
-                return {"success": False, "message": f"Ollama API error: {response.status_code}"}
-                
+                return {
+                    "success": False,
+                    "message": f"Ollama API error: {response.status_code}",
+                }
+
     except httpx.ConnectError:
-        return {"success": False, "message": "Could not connect to Ollama. Is it running at this URL?"}
+        return {
+            "success": False,
+            "message": "Could not connect to Ollama. Is it running at this URL?",
+        }
     except Exception as e:
         return {"success": False, "message": str(e)}
 
 
 class TestCustomEndpointRequest(BaseModel):
     """Request to test custom OpenAI-compatible endpoint."""
+
     name: str
     url: str
     api_key: Optional[str] = None
@@ -874,18 +1004,29 @@ async def get_openrouter_models():
 
             data = response.json()
             models = []
-            
+
             # Comprehensive exclusion list for non-text/chat models
             excluded_terms = [
-                "embed", "audio", "whisper", "tts", "dall-e", "realtime", 
-                "vision-only", "voxtral", "speech", "transcribe", "sora"
+                "embed",
+                "audio",
+                "whisper",
+                "tts",
+                "dall-e",
+                "realtime",
+                "vision-only",
+                "voxtral",
+                "speech",
+                "transcribe",
+                "sora",
             ]
 
             for model in data.get("data", []):
                 mid = model.get("id", "").lower()
                 name_lower = model.get("name", "").lower()
-                
-                if any(term in mid for term in excluded_terms) or any(term in name_lower for term in excluded_terms):
+
+                if any(term in mid for term in excluded_terms) or any(
+                    term in name_lower for term in excluded_terms
+                ):
                     continue
 
                 # Extract pricing - free models have 0 cost
@@ -894,13 +1035,15 @@ async def get_openrouter_models():
                 completion_price = float(pricing.get("completion", "0") or "0")
                 is_free = prompt_price == 0 and completion_price == 0
 
-                models.append({
-                    "id": f"openrouter:{model.get('id')}",
-                    "name": f"{model.get('name', model.get('id'))} [OpenRouter]",
-                    "provider": "OpenRouter",
-                    "context_length": model.get("context_length"),
-                    "is_free": is_free,
-                })
+                models.append(
+                    {
+                        "id": f"openrouter:{model.get('id')}",
+                        "name": f"{model.get('name', model.get('id'))} [OpenRouter]",
+                        "provider": "OpenRouter",
+                        "context_length": model.get("context_length"),
+                        "is_free": is_free,
+                    }
+                )
 
             # Sort by name
             models.sort(key=lambda x: x["name"].lower())
@@ -920,7 +1063,7 @@ async def test_openrouter_api(request: TestOpenRouterRequest):
 
     # Use provided key or fall back to saved key
     api_key = request.api_key if request.api_key else get_openrouter_api_key()
-    
+
     if not api_key:
         return {"success": False, "message": "No API key provided or configured"}
 
@@ -938,7 +1081,10 @@ async def test_openrouter_api(request: TestOpenRouterRequest):
             elif response.status_code == 401:
                 return {"success": False, "message": "Invalid API key"}
             else:
-                return {"success": False, "message": f"API error: {response.status_code}"}
+                return {
+                    "success": False,
+                    "message": f"API error: {response.status_code}",
+                }
 
     except httpx.TimeoutException:
         return {"success": False, "message": "Request timed out"}
@@ -946,6 +1092,49 @@ async def test_openrouter_api(request: TestOpenRouterRequest):
         return {"success": False, "message": str(e)}
 
 
+@app.get("/api/logs/recent")
+async def get_recent_logs(limit: int = 50):
+    """Get recent error logs for UI display."""
+    from .error_logger import get_recent_errors
+
+    return {"errors": get_recent_errors(limit)}
+
+
+@app.get("/api/logs/files")
+async def get_log_files():
+    """Get list of log files."""
+    from .error_logger import get_log_files
+
+    return {"files": get_log_files()}
+
+
+@app.get("/api/logs/file/{filename}")
+async def read_log_file(filename: str, lines: int = 100):
+    """Read contents of a specific log file."""
+    from .error_logger import read_log_file
+
+    # Basic security check
+    if ".." in filename or "/" in filename or "\\" in filename:
+        raise HTTPException(status_code=400, detail="Invalid filename")
+
+    content = read_log_file(filename, lines)
+    return {"content": content}
+
+
+@app.post("/api/logs/client")
+async def log_from_client(log_data: dict):
+    """Accept log messages from frontend."""
+    from .error_logger import log_event
+
+    level = log_data.get("level", "INFO")
+    message = log_data.get("message", "")
+    data = log_data.get("data", {})
+
+    await log_event(f"client_{level.lower()}", {"message": message, **data}, level)
+    return {"status": "logged"}
+
+
 if __name__ == "__main__":
     import uvicorn
+
     uvicorn.run(app, host="0.0.0.0", port=8001)

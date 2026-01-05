@@ -1,6 +1,7 @@
 """Custom OpenAI-compatible endpoint provider."""
 
 import httpx
+import json
 from typing import List, Dict, Any
 from .base import LLMProvider
 from ..settings import get_settings
@@ -17,17 +18,103 @@ class CustomOpenAIProvider(LLMProvider):
         api_key = settings.custom_endpoint_api_key or ""
         return name, url, api_key
 
-    async def query(self, model_id: str, messages: List[Dict[str, str]], timeout: float = 120.0, temperature: float = 0.7) -> Dict[str, Any]:
+    def _parse_error_response(self, response, model: str, name: str) -> dict:
+        """
+        Parse error response from OpenAI-compatible endpoints.
+        Handles various error formats from different providers.
+        """
+        status_code = response.status_code
+        raw_text = response.text[:1000]  # Limit for safety
+
+        # Default values
+        error_type = "unknown_error"
+        message = raw_text
+
+        # Try to parse JSON error
+        try:
+            error_json = response.json()
+
+            # OpenAI format: {"error": {"message": "...", "type": "...", "code": "..."}}
+            if "error" in error_json:
+                err = error_json["error"]
+                if isinstance(err, dict):
+                    message = err.get("message") or err.get("msg") or str(err)
+                    error_type = err.get("type") or err.get("code") or "api_error"
+                else:
+                    message = str(err)
+
+            # Alternative format: {"message": "...", "code": "..."}
+            elif "message" in error_json:
+                message = error_json["message"]
+                error_type = error_json.get("code", "api_error")
+
+            # NanoGPT specific format (if any)
+            elif "detail" in error_json:
+                message = error_json["detail"]
+                error_type = "validation_error"
+
+        except (json.JSONDecodeError, KeyError):
+            # Not JSON, use raw text
+            pass
+
+        # Ensure message is not empty
+        if not message or not message.strip():
+            message = (
+                raw_text
+                if raw_text
+                else f"HTTP {status_code} (No error message provided)"
+            )
+
+        # If message is still just brackets (empty JSON), add hint
+        if message.strip() == "{}":
+            message = f"HTTP {status_code} (Empty JSON response)"
+
+        # Categorize by status code
+        if status_code == 429:
+            error_type = "rate_limit"
+            if "rate" not in message.lower():
+                message = f"Rate limited: {message}"
+        elif status_code == 401:
+            error_type = "auth_error"
+        elif status_code == 403:
+            error_type = "forbidden"
+        elif status_code == 404:
+            error_type = "model_not_found"
+        elif status_code == 503:
+            error_type = "service_unavailable"
+        elif status_code >= 500:
+            error_type = "server_error"
+
+        # Create user-friendly display message
+        display_message = f"[{name}] [{model}] {error_type.upper()}: {message}"
+
+        return {
+            "error_type": error_type,
+            "message": message,
+            "display_message": display_message,
+            "raw_response": raw_text,
+        }
+
+    async def query(
+        self,
+        model_id: str,
+        messages: List[Dict[str, str]],
+        timeout: float = 180.0,
+        temperature: float = 0.7,
+    ) -> Dict[str, Any]:
         name, base_url, api_key = self._get_config()
 
         if not base_url:
-            return {"error": True, "error_message": f"{name} endpoint URL not configured"}
+            return {
+                "error": True,
+                "error_message": f"{name} endpoint URL not configured",
+            }
 
         # Strip prefix if present
         model = model_id.removeprefix("custom:")
 
         # Normalize URL
-        if base_url.endswith('/'):
+        if base_url.endswith("/"):
             base_url = base_url[:-1]
 
         try:
@@ -42,22 +129,117 @@ class CustomOpenAIProvider(LLMProvider):
                     json={
                         "model": model,
                         "messages": messages,
-                        "temperature": temperature
-                    }
+                        "temperature": temperature,
+                    },
                 )
 
                 if response.status_code != 200:
+                    error_info = self._parse_error_response(response, model, name)
+
+                    # Log the error
+                    from ..error_logger import log_model_error
+
+                    await log_model_error(
+                        model=model,
+                        provider=name,
+                        error_type=error_info["error_type"],
+                        status_code=response.status_code,
+                        message=error_info["message"],
+                        raw_response=error_info.get("raw_response"),
+                    )
+
                     return {
                         "error": True,
-                        "error_message": f"{name} API error: {response.status_code} - {response.text}"
+                        "error_type": error_info["error_type"],
+                        "error_code": response.status_code,
+                        "error_message": error_info["display_message"],
                     }
 
                 data = response.json()
-                content = data["choices"][0]["message"]["content"]
-                return {"content": content, "error": False}
+                message = data["choices"][0]["message"]
 
+                # Extract content - standard field
+                content = message.get("content") or ""
+
+                # For thinking/reasoning models (Kimi K2, DeepSeek, etc.)
+                # Check for reasoning fields that may contain the actual response
+                reasoning = (
+                    message.get("reasoning_content")  # Moonshot Kimi K2 official
+                    or message.get("reasoning")  # Together.ai, some providers
+                    or message.get("reasoning_details")  # Other providers
+                    or ""
+                )
+
+                # If content is empty but reasoning exists, use reasoning
+                if not content and reasoning:
+                    content = reasoning
+                # If both exist, prepend reasoning as collapsed details
+                elif content and reasoning:
+                    content = f"<details><summary>Reasoning Process</summary>\n\n{reasoning}\n\n</details>\n\n{content}"
+
+                return {"content": content, "reasoning": reasoning, "error": False}
+
+        except httpx.TimeoutException as e:
+            # Timeout error - capture details
+            from ..error_logger import log_model_error
+
+            error_msg = f"Request timed out after {timeout}s"
+            if str(e):
+                error_msg += f": {str(e)}"
+
+            await log_model_error(
+                model=model,
+                provider=name,
+                error_type="timeout",
+                message=error_msg,
+                raw_response=f"Timeout type: {type(e).__name__}",
+            )
+            return {
+                "error": True,
+                "error_type": "timeout",
+                "error_message": f"[{name}] [{model}] TIMEOUT: {error_msg}",
+            }
+        except httpx.ConnectError as e:
+            # Connection error
+            from ..error_logger import log_model_error
+
+            error_msg = f"Connection failed to {base_url}"
+            if str(e):
+                error_msg += f": {str(e)}"
+
+            await log_model_error(
+                model=model,
+                provider=name,
+                error_type="connection_error",
+                message=error_msg,
+                raw_response=f"Error type: {type(e).__name__}",
+            )
+            return {
+                "error": True,
+                "error_type": "connection_error",
+                "error_message": f"[{name}] [{model}] CONNECTION_ERROR: {error_msg}",
+            }
         except Exception as e:
-            return {"error": True, "error_message": str(e)}
+            # Generic error - capture as much detail as possible
+            from ..error_logger import log_model_error
+
+            error_type_name = type(e).__name__
+            error_msg = (
+                str(e) if str(e) else f"Unexpected {error_type_name} (no message)"
+            )
+
+            await log_model_error(
+                model=model,
+                provider=name,
+                error_type="exception",
+                message=error_msg,
+                raw_response=f"Exception type: {error_type_name}, Args: {e.args}",
+            )
+            return {
+                "error": True,
+                "error_type": "exception",
+                "error_message": f"[{name}] [{model}] {error_type_name.upper()}: {error_msg}",
+            }
 
     async def get_models(self) -> List[Dict[str, Any]]:
         name, base_url, api_key = self._get_config()
@@ -66,7 +248,7 @@ class CustomOpenAIProvider(LLMProvider):
             return []
 
         # Normalize URL
-        if base_url.endswith('/'):
+        if base_url.endswith("/"):
             base_url = base_url[:-1]
 
         try:
@@ -75,10 +257,7 @@ class CustomOpenAIProvider(LLMProvider):
                 headers["Authorization"] = f"Bearer {api_key}"
 
             async with httpx.AsyncClient(timeout=10.0) as client:
-                response = await client.get(
-                    f"{base_url}/models",
-                    headers=headers
-                )
+                response = await client.get(f"{base_url}/models", headers=headers)
 
                 if response.status_code != 200:
                     return []
@@ -93,14 +272,26 @@ class CustomOpenAIProvider(LLMProvider):
 
                     mid = model_id.lower()
                     # Filter out non-chat models
-                    if any(x in mid for x in ["embed", "whisper", "tts", "dall-e", "audio", "transcribe"]):
+                    if any(
+                        x in mid
+                        for x in [
+                            "embed",
+                            "whisper",
+                            "tts",
+                            "dall-e",
+                            "audio",
+                            "transcribe",
+                        ]
+                    ):
                         continue
 
-                    models.append({
-                        "id": f"custom:{model_id}",
-                        "name": f"{model_id} [{name}]",
-                        "provider": name
-                    })
+                    models.append(
+                        {
+                            "id": f"custom:{model_id}",
+                            "name": f"{model_id} [{name}]",
+                            "provider": name,
+                        }
+                    )
 
                 return sorted(models, key=lambda x: x["name"])
 
@@ -113,7 +304,7 @@ class CustomOpenAIProvider(LLMProvider):
             return {"success": False, "message": "URL is required"}
 
         # Normalize URL
-        if url.endswith('/'):
+        if url.endswith("/"):
             url = url[:-1]
 
         try:
@@ -122,22 +313,25 @@ class CustomOpenAIProvider(LLMProvider):
                 headers["Authorization"] = f"Bearer {api_key}"
 
             async with httpx.AsyncClient(timeout=10.0) as client:
-                response = await client.get(
-                    f"{url}/models",
-                    headers=headers
-                )
+                response = await client.get(f"{url}/models", headers=headers)
 
                 if response.status_code == 200:
                     data = response.json()
                     model_count = len(data.get("data", []))
                     return {
                         "success": True,
-                        "message": f"Connected successfully. Found {model_count} models."
+                        "message": f"Connected successfully. Found {model_count} models.",
                     }
                 elif response.status_code == 401:
-                    return {"success": False, "message": "Authentication failed. Check your API key."}
+                    return {
+                        "success": False,
+                        "message": "Authentication failed. Check your API key.",
+                    }
                 else:
-                    return {"success": False, "message": f"API error: {response.status_code}"}
+                    return {
+                        "success": False,
+                        "message": f"API error: {response.status_code}",
+                    }
 
         except httpx.ConnectError:
             return {"success": False, "message": "Connection failed. Check the URL."}
