@@ -99,7 +99,7 @@ class CustomOpenAIProvider(LLMProvider):
         self,
         model_id: str,
         messages: List[Dict[str, str]],
-        timeout: float = 180.0,
+        timeout: float = 600.0,
         temperature: float = 0.7,
     ) -> Dict[str, Any]:
         name, base_url, api_key = self._get_config()
@@ -167,6 +167,7 @@ class CustomOpenAIProvider(LLMProvider):
                     message.get("reasoning_content")  # Moonshot Kimi K2 official
                     or message.get("reasoning")  # Together.ai, some providers
                     or message.get("reasoning_details")  # Other providers
+                    or message.get("thought")  # Some other models
                     or ""
                 )
 
@@ -176,6 +177,18 @@ class CustomOpenAIProvider(LLMProvider):
                 # If both exist, prepend reasoning as collapsed details
                 elif content and reasoning:
                     content = f"<details><summary>Reasoning Process</summary>\n\n{reasoning}\n\n</details>\n\n{content}"
+
+                # Debug: If content is still empty, log the keys to help identify the issue
+                if not content and not reasoning:
+                    from ..error_logger import log_model_error
+
+                    await log_model_error(
+                        model=model,
+                        provider=name,
+                        error_type="empty_response_debug",
+                        message=f"Empty content/reasoning. Available keys: {list(message.keys())}",
+                        raw_response=str(message)[:1000],
+                    )
 
                 return {"content": content, "reasoning": reasoning, "error": False}
 

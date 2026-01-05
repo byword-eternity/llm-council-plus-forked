@@ -74,7 +74,7 @@ def get_provider_for_model(model_id: str) -> Any:
 async def query_model(
     model: str,
     messages: List[Dict[str, str]],
-    timeout: float = 180.0,
+    timeout: float = 600.0,
     temperature: float = 0.7,
 ) -> Dict[str, Any]:
     """Dispatch query to appropriate provider."""
