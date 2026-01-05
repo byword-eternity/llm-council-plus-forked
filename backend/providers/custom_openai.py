@@ -3,7 +3,7 @@
 import httpx
 import json
 from datetime import datetime, timezone
-from typing import List, Dict, Any
+from typing import List, Dict, Any, Optional
 from .base import LLMProvider
 from ..settings import get_settings
 
@@ -78,7 +78,7 @@ def _sanitize_dict(data: Dict[str, Any]) -> Dict[str, Any]:
 
 
 class CustomOpenAIProvider(LLMProvider):
-    """Provider for any OpenAI-compatible API endpoint."""
+    """Provider for any OpenAI-compatible endpoint."""
 
     def _get_config(self) -> tuple[str, str, str]:
         """Get custom endpoint configuration."""
@@ -247,6 +247,59 @@ class CustomOpenAIProvider(LLMProvider):
             level="DEBUG",
         )
 
+    async def _parse_sse_stream(self, response: httpx.Response) -> tuple[str, str]:
+        """
+        Parse Server-Sent Events (SSE) stream from OpenAI-compatible API.
+
+        Returns:
+            tuple: (aggregated_content, aggregated_reasoning)
+        """
+        content_parts = []
+        reasoning_parts = []
+
+        async for line in response.aiter_lines():
+            # Skip empty lines
+            if not line or not line.strip():
+                continue
+
+            # SSE format: lines starting with "data:" contain JSON
+            if line.startswith("data:"):
+                data_str = line[5:].strip()  # Remove "data:" prefix
+
+                # Handle SSE done marker
+                if data_str == "[DONE]":
+                    break
+
+                # Parse the chunk JSON
+                try:
+                    chunk = json.loads(data_str)
+                    choices = chunk.get("choices", [])
+
+                    for choice in choices:
+                        delta = choice.get("delta", {})
+
+                        # Extract content from delta
+                        content_chunk = delta.get("content") or ""
+                        if content_chunk:
+                            content_parts.append(content_chunk)
+
+                        # Extract reasoning/thinking content (Kimi K2, DeepSeek, etc.)
+                        reasoning_chunk = (
+                            delta.get("reasoning_content")  # Moonshot Kimi K2 official
+                            or delta.get("reasoning")  # Together.ai, some providers
+                            or delta.get("reasoning_details")  # Other providers
+                            or delta.get("thought")  # Some other models
+                            or ""
+                        )
+                        if reasoning_chunk:
+                            reasoning_parts.append(reasoning_chunk)
+
+                except json.JSONDecodeError:
+                    # Skip malformed JSON chunks
+                    continue
+
+        return "".join(content_parts), "".join(reasoning_parts)
+
     async def query(
         self,
         model_id: str,
@@ -274,93 +327,114 @@ class CustomOpenAIProvider(LLMProvider):
             if api_key:
                 headers["Authorization"] = f"Bearer {api_key}"
 
-            # Build request body for logging
+            # Build request body - include stream=True for models that require it (Kimi K2)
             request_body = {
                 "model": model,
                 "messages": messages,
                 "temperature": temperature,
+                "stream": True,  # Required for Kimi K2 and other thinking models
             }
 
             async with httpx.AsyncClient(timeout=timeout) as client:
-                response = await client.post(
+                # Use streaming response for Kimi K2 compatibility
+                async with client.stream(
+                    "POST",
                     f"{base_url}/chat/completions",
                     headers=headers,
                     json=request_body,
-                )
+                ) as response:
+                    # Check for errors
+                    if response.status_code != 200:
+                        # Read error body before parsing
+                        error_text = await response.aread()
+                        error_text_str = error_text.decode("utf-8", errors="replace")
 
-                # Parse response body for logging
-                response_data = response.json() if response.status_code == 200 else {}
+                        # Create a mock response object for error parsing
+                        class MockResponse:
+                            def __init__(self, status, text):
+                                self.status_code = status
+                                self.text = text
 
-                # Log complete request/response in ProxyPal format
-                await self._log_request_response(
-                    provider_name=name,
-                    model=model,
-                    url=base_url,
-                    request_headers=headers,
-                    request_body=request_body,
-                    response_status=response.status_code,
-                    response_headers=dict(response.headers),
-                    response_body=response_data,
-                )
+                            def json(self):
+                                try:
+                                    import json
 
-                if response.status_code != 200:
-                    error_info = self._parse_error_response(response, model, name)
+                                    return json.loads(self.text)
+                                except:
+                                    return {"error": str(self.text)}
 
-                    # Log the error
-                    from ..error_logger import log_model_error
+                        error_info = self._parse_error_response(
+                            MockResponse(response.status_code, error_text_str),
+                            model,
+                            name,
+                        )
 
-                    await log_model_error(
-                        model=model,
-                        provider=name,
-                        error_type=error_info["error_type"],
-                        status_code=response.status_code,
-                        message=error_info["message"],
-                        raw_response=error_info.get("raw_response"),
-                    )
+                        # Log the error
+                        from ..error_logger import log_model_error
 
-                    return {
-                        "error": True,
-                        "error_type": error_info["error_type"],
-                        "error_code": response.status_code,
-                        "error_message": error_info["display_message"],
+                        await log_model_error(
+                            model=model,
+                            provider=name,
+                            error_type=error_info["error_type"],
+                            status_code=response.status_code,
+                            message=error_info["message"],
+                            raw_response=error_info.get("raw_response"),
+                        )
+
+                        return {
+                            "error": True,
+                            "error_type": error_info["error_type"],
+                            "error_code": response.status_code,
+                            "error_message": error_info["display_message"],
+                        }
+
+                    # Parse the streaming response
+                    content, reasoning = await self._parse_sse_stream(response)
+
+                    # Log the streaming response in ProxyPal format
+                    # Build a simplified representation for logging
+                    response_data = {
+                        "choices": [
+                            {
+                                "message": {
+                                    "content": content,
+                                    "reasoning_content": reasoning,
+                                }
+                            }
+                        ]
                     }
 
-                data = response_data
-                message = data["choices"][0]["message"]
-
-                # Extract content - standard field
-                content = message.get("content") or ""
-
-                # For thinking/reasoning models (Kimi K2, DeepSeek, etc.)
-                # Check for reasoning fields that may contain the actual response
-                reasoning = (
-                    message.get("reasoning_content")  # Moonshot Kimi K2 official
-                    or message.get("reasoning")  # Together.ai, some providers
-                    or message.get("reasoning_details")  # Other providers
-                    or message.get("thought")  # Some other models
-                    or ""
-                )
-
-                # If content is empty but reasoning exists, use reasoning
-                if not content and reasoning:
-                    content = reasoning
-                # If both exist, prepend reasoning as collapsed details
-                elif content and reasoning:
-                    content = f"<details><summary>Reasoning Process</summary>\n\n{reasoning}\n\n</details>\n\n{content}"
-
-                # Debug: If content is still empty, log the keys to help identify the issue
-                if not content and not reasoning:
-                    from ..error_logger import log_model_error
-
-                    await log_model_error(
+                    await self._log_request_response(
+                        provider_name=name,
                         model=model,
-                        provider=name,
-                        error_type="empty_response_debug",
-                        message=f"Empty content/reasoning. Available keys: {list(message.keys())}",
-                        raw_response=json.dumps(message, default=str)[:2000],
+                        url=base_url,
+                        request_headers=headers,
+                        request_body=request_body,
+                        response_status=response.status_code,
+                        response_headers=dict(response.headers),
+                        response_body=response_data,
                     )
 
-                return {"content": content, "reasoning": reasoning, "error": False}
+                    # Debug: If content is still empty, log the issue
+                    if not content and not reasoning:
+                        from ..error_logger import log_model_error
+
+                        await log_model_error(
+                            model=model,
+                            provider=name,
+                            error_type="empty_response_debug",
+                            message="Empty content/reasoning from streaming response",
+                            raw_response="Streaming completed but no content or reasoning chunks found",
+                        )
+
+                    # If content is empty but reasoning exists, use reasoning
+                    if not content and reasoning:
+                        content = reasoning
+                    # If both exist, prepend reasoning as collapsed details
+                    elif content and reasoning:
+                        content = f"<details><summary>Reasoning Process</summary>\n\n{reasoning}\n\n</details>\n\n{content}"
+
+                    return {"content": content, "reasoning": reasoning, "error": False}
 
         except httpx.TimeoutException as e:
             # Timeout error - capture details
