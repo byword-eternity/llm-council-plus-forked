@@ -2,9 +2,79 @@
 
 import httpx
 import json
+from datetime import datetime, timezone
 from typing import List, Dict, Any
 from .base import LLMProvider
 from ..settings import get_settings
+
+# Sensitive key patterns for sanitization
+_SANITIZE_KEYS = {
+    "api_key",
+    "apikey",
+    "api-key",
+    "secret",
+    "secret_key",
+    "secretkey",
+    "secret-key",
+    "token",
+    "access_token",
+    "accesstoken",
+    "access-token",
+    "credential",
+    "credentials",
+    "auth",
+    "authorization",
+    "bearer",
+    "auth_token",
+    "key",
+    "private_key",
+    "privatekey",
+    "private-key",
+    "password",
+    "passwd",
+    "pwd",
+    "signature",
+    "sign",
+}
+
+
+def _sanitize_header(key: str, value: str) -> str:
+    """Mask sensitive values in headers."""
+    key_lower = key.lower()
+    value_lower = value.lower()
+
+    # Check if header name or value contains sensitive keywords
+    if any(
+        san_key in key_lower for san_key in ["authorization", "api-key", "x-api-key"]
+    ):
+        # Mask the value
+        if "bearer" in value_lower:
+            # Mask bearer token
+            parts = value.split()
+            if len(parts) >= 2:
+                rest = parts[1]
+                if len(rest) > 8:
+                    return f"{parts[0]} {rest[:4]}...{rest[-4:]}"
+                else:
+                    return f"{parts[0]} ****"
+        else:
+            # Generic masking for other auth headers
+            if len(value) > 8:
+                return f"{value[:4]}...{value[-4:]}"
+            else:
+                return "****"
+    return value
+
+
+def _sanitize_dict(data: Dict[str, Any]) -> Dict[str, Any]:
+    """Remove sensitive keys from dictionary."""
+    if not isinstance(data, dict):
+        return data
+    return {
+        k: v
+        for k, v in data.items()
+        if not any(san_key in k.lower() for san_key in _SANITIZE_KEYS)
+    }
 
 
 class CustomOpenAIProvider(LLMProvider):
@@ -95,6 +165,88 @@ class CustomOpenAIProvider(LLMProvider):
             "raw_response": raw_text,
         }
 
+    async def _log_request_response(
+        self,
+        provider_name: str,
+        model: str,
+        url: str,
+        request_headers: Dict[str, str],
+        request_body: Dict[str, Any],
+        response_status: int,
+        response_headers: Dict[str, str],
+        response_body: Dict[str, Any],
+    ) -> None:
+        """
+        Log complete request/response details in ProxyPal format.
+
+        Format matches: v1-chat-completions-*.log
+        """
+        from ..error_logger import log_event
+
+        timestamp = datetime.now(timezone.utc).isoformat()
+
+        # Build comprehensive log entry in ProxyPal format
+        log_lines = []
+        log_lines.append("=== REQUEST INFO ===")
+        log_lines.append("Version: LLM-Council-Plus-1.0")
+        log_lines.append(f"URL: {url}/chat/completions")
+        log_lines.append("Method: POST")
+        log_lines.append(f"Timestamp: {timestamp}")
+        log_lines.append("")
+
+        log_lines.append("=== HEADERS ===")
+        for key, value in request_headers.items():
+            log_lines.append(f"{key}: {_sanitize_header(key, value)}")
+        log_lines.append("")
+
+        log_lines.append("=== REQUEST BODY ===")
+        log_lines.append(
+            json.dumps(_sanitize_dict(request_body), indent=2, default=str)
+        )
+        log_lines.append("")
+
+        log_lines.append("=== API REQUEST 1 ===")
+        log_lines.append(f"Timestamp: {timestamp}")
+        log_lines.append(f"Upstream URL: {url}/chat/completions")
+        log_lines.append("HTTP Method: POST")
+        log_lines.append(f"Auth: provider={provider_name}")
+        log_lines.append("")
+        log_lines.append("Headers:")
+        for key, value in request_headers.items():
+            log_lines.append(f"{key}: {_sanitize_header(key, value)}")
+        log_lines.append("")
+        log_lines.append("Body:")
+        log_lines.append(
+            json.dumps(_sanitize_dict(request_body), indent=2, default=str)
+        )
+        log_lines.append("")
+
+        log_lines.append("=== API RESPONSE 1 ===")
+        log_lines.append(f"Timestamp: {timestamp}")
+        log_lines.append("")
+        log_lines.append(f"Status: {response_status}")
+        log_lines.append("Headers:")
+        for key, value in response_headers.items():
+            log_lines.append(f"{key}: {value}")
+        log_lines.append("")
+        log_lines.append("Body:")
+        log_lines.append(json.dumps(response_body, indent=2, default=str))
+        log_lines.append("")
+
+        log_lines.append("=== RESPONSE ===")
+        log_lines.append(f"Status: {response_status}")
+        log_lines.append("")
+        log_lines.append(json.dumps(response_body, indent=2, default=str))
+
+        log_content = "\n".join(log_lines)
+
+        # Log as DEBUG level event
+        await log_event(
+            event_type="v1_chat_completions",
+            data={"log_content": log_content},
+            level="DEBUG",
+        )
+
     async def query(
         self,
         model_id: str,
@@ -122,15 +274,33 @@ class CustomOpenAIProvider(LLMProvider):
             if api_key:
                 headers["Authorization"] = f"Bearer {api_key}"
 
+            # Build request body for logging
+            request_body = {
+                "model": model,
+                "messages": messages,
+                "temperature": temperature,
+            }
+
             async with httpx.AsyncClient(timeout=timeout) as client:
                 response = await client.post(
                     f"{base_url}/chat/completions",
                     headers=headers,
-                    json={
-                        "model": model,
-                        "messages": messages,
-                        "temperature": temperature,
-                    },
+                    json=request_body,
+                )
+
+                # Parse response body for logging
+                response_data = response.json() if response.status_code == 200 else {}
+
+                # Log complete request/response in ProxyPal format
+                await self._log_request_response(
+                    provider_name=name,
+                    model=model,
+                    url=base_url,
+                    request_headers=headers,
+                    request_body=request_body,
+                    response_status=response.status_code,
+                    response_headers=dict(response.headers),
+                    response_body=response_data,
                 )
 
                 if response.status_code != 200:
@@ -155,7 +325,7 @@ class CustomOpenAIProvider(LLMProvider):
                         "error_message": error_info["display_message"],
                     }
 
-                data = response.json()
+                data = response_data
                 message = data["choices"][0]["message"]
 
                 # Extract content - standard field
@@ -187,7 +357,7 @@ class CustomOpenAIProvider(LLMProvider):
                         provider=name,
                         error_type="empty_response_debug",
                         message=f"Empty content/reasoning. Available keys: {list(message.keys())}",
-                        raw_response=str(message)[:1000],
+                        raw_response=json.dumps(message, default=str)[:2000],
                     )
 
                 return {"content": content, "reasoning": reasoning, "error": False}

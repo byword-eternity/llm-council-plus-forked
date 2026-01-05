@@ -264,7 +264,9 @@ async def log_model_error(
 
     # Always include raw response for errors (helpful for debugging)
     if raw_response:
-        log_line += f"\n    Raw: {raw_response[:500]}"
+        # Increase raw output limit for detailed debugging
+        limit = 2000 if "debug" in settings.logging_level.lower() else 500
+        log_line += f"\n    Raw: {raw_response[:limit]}"
 
     log_line += "\n"
 
@@ -308,13 +310,30 @@ async def log_event(event_type: str, data: Dict[str, Any], level: str = "INFO") 
     timestamp = datetime.now(timezone.utc)
     timestamp_str = timestamp.strftime("%Y-%m-%d %H:%M:%S")
 
-    # Sanitize data - remove any sensitive keys
-    sanitized = _sanitize_dict(data)
+    # Check for special log_content key (multiline content for human readability)
+    if "log_content" in data and isinstance(data["log_content"], str):
+        # Write multiline content directly for human readability
+        log_content = data["log_content"]
+        # Create a clean header
+        header = f"{timestamp_str} | {level:5} | [{event_type}]"
 
-    log_line = (
-        f"{timestamp_str} | {level:5} | "
-        f"[{event_type}] {json.dumps(sanitized, default=str)}\n"
-    )
+        # Write header line
+        log_lines = [header]
+        # Add each line of the log content with proper indentation
+        for line in log_content.split("\n"):
+            if line.strip():
+                log_lines.append(f"  {line}")
+            else:
+                log_lines.append("")
+
+        log_line = "\n".join(log_lines) + "\n"
+    else:
+        # Standard format - sanitize and JSON encode
+        sanitized = _sanitize_dict(data)
+        log_line = (
+            f"{timestamp_str} | {level:5} | "
+            f"[{event_type}] {json.dumps(sanitized, default=str)}\n"
+        )
 
     try:
         log_path = get_log_path()
