@@ -3,20 +3,30 @@
 from abc import ABC, abstractmethod
 from typing import List, Dict, Any, Optional
 
+
 class LLMProvider(ABC):
     """Abstract base class for LLM providers."""
 
     @abstractmethod
     @abstractmethod
-    async def query(self, model_id: str, messages: List[Dict[str, str]], timeout: float = 120.0, temperature: float = 0.7) -> Dict[str, Any]:
+    async def query(
+        self,
+        conversation_id: str,
+        model_id: str,
+        messages: List[Dict[str, str]],
+        timeout: float = 120.0,
+        temperature: float = 0.7,
+    ) -> Dict[str, Any]:
         """
         Send a query to the LLM.
-        
+
         Args:
+            conversation_id: The conversation UUID for logging.
             model_id: The ID of the model to query.
             messages: List of message dicts (role, content).
             timeout: Request timeout in seconds.
-            
+            temperature: Temperature setting for the model.
+
         Returns:
             Dict containing 'content' (str) or 'error' (bool) and 'error_message' (str).
         """
@@ -26,7 +36,7 @@ class LLMProvider(ABC):
     async def get_models(self) -> List[Dict[str, Any]]:
         """
         Fetch available models from the provider.
-        
+
         Returns:
             List of model dicts (id, name, context_length, etc.).
         """
@@ -36,10 +46,10 @@ class LLMProvider(ABC):
     async def validate_key(self, api_key: str) -> Dict[str, Any]:
         """
         Validate the provided API key.
-        
+
         Args:
             api_key: The API key to test.
-            
+
         Returns:
             Dict with 'success' (bool) and 'message' (str).
         """

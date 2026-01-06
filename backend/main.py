@@ -160,6 +160,7 @@ async def send_message_stream(
                 # Check for disconnect before starting search
                 if await request.is_disconnected():
                     await log_event(
+                        conversation_id,
                         "client_disconnect",
                         {"stage": "web_search", "reason": "disconnected"},
                         level="WARN",
@@ -180,6 +181,7 @@ async def send_message_stream(
                 # Check for disconnect before generating search query
                 if await request.is_disconnected():
                     await log_event(
+                        conversation_id,
                         "client_disconnect",
                         {"stage": "search_setup", "reason": "disconnected"},
                         level="WARN",
@@ -192,6 +194,7 @@ async def send_message_stream(
                 # Check for disconnect before performing search
                 if await request.is_disconnected():
                     await log_event(
+                        conversation_id,
                         "client_disconnect",
                         {"stage": "search_execution", "reason": "disconnected"},
                         level="WARN",
@@ -218,11 +221,12 @@ async def send_message_stream(
             total_models = 0
 
             async for item in stage1_collect_responses(
-                body.content, search_context, request
+                conversation_id, body.content, search_context, request
             ):
                 if isinstance(item, int):
                     total_models = item
                     await log_event(
+                        conversation_id,
                         "stage1_init",
                         {
                             "total_models": total_models,
@@ -244,6 +248,7 @@ async def send_message_stream(
             stage1_success = len([r for r in stage1_results if not r.get("error")])
             stage1_failed = len([r for r in stage1_results if r.get("error")])
             await log_event(
+                conversation_id,
                 "stage1_complete",
                 {
                     "total": len(stage1_results),
@@ -269,7 +274,11 @@ async def send_message_stream(
 
                 # Iterate over the async generator
                 async for item in stage2_collect_rankings(
-                    body.content, stage1_results, search_context, request
+                    conversation_id,
+                    body.content,
+                    stage1_results,
+                    search_context,
+                    request,
                 ):
                     # First item is the label mapping
                     if isinstance(item, dict) and not item.get("model"):
@@ -283,6 +292,7 @@ async def send_message_stream(
 
                     # Send progress update
                     await log_event(
+                        conversation_id,
                         "stage2_progress",
                         {
                             "progress": f"{len(stage2_results)}/{len(label_to_model)}",
@@ -307,6 +317,7 @@ async def send_message_stream(
                 # Check for disconnect before starting Stage 3
                 if await request.is_disconnected():
                     await log_event(
+                        conversation_id,
                         "client_disconnect",
                         {"stage": "stage3", "reason": "disconnected"},
                         level="WARN",
@@ -314,10 +325,15 @@ async def send_message_stream(
                     raise asyncio.CancelledError("Client disconnected")
 
                 stage3_result = await stage3_synthesize_final(
-                    body.content, stage1_results, stage2_results, search_context
+                    conversation_id,
+                    body.content,
+                    stage1_results,
+                    stage2_results,
+                    search_context,
                 )
                 # Log stage3 completion
                 await log_event(
+                    conversation_id,
                     "stage3_complete",
                     {
                         "success": not stage3_result.get("error"),
@@ -335,7 +351,9 @@ async def send_message_stream(
                     storage.update_conversation_title(conversation_id, title)
                     yield f"data: {json.dumps({'type': 'title_complete', 'data': {'title': title}})}\n\n"
                 except Exception as e:
-                    await log_event("title_error", {"error": str(e)}, level="ERROR")
+                    await log_event(
+                        conversation_id, "title_error", {"error": str(e)}, level="ERROR"
+                    )
 
             # Save complete assistant message with metadata
             metadata = {
@@ -381,10 +399,17 @@ async def send_message_stream(
                         level="INFO",
                     )
                 except Exception as e:
-                    await log_event("title_save_error", {"error": str(e)}, level="WARN")
+                    await log_event(
+                        conversation_id,
+                        "title_save_error",
+                        {"error": str(e)},
+                        level="WARN",
+                    )
             raise
         except Exception as e:
-            await log_event("stream_error", {"error": str(e)}, level="ERROR")
+            await log_event(
+                conversation_id, "stream_error", {"error": str(e)}, level="ERROR"
+            )
             # Save error to conversation history
             storage.add_error_message(conversation_id, f"Error: {str(e)}")
             # Send error event

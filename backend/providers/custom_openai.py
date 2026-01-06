@@ -2,7 +2,8 @@
 
 import httpx
 import json
-from datetime import datetime, timezone
+import time as time_module
+from datetime import datetime
 from typing import List, Dict, Any, Optional
 from .base import LLMProvider
 from ..settings import get_settings
@@ -167,6 +168,7 @@ class CustomOpenAIProvider(LLMProvider):
 
     async def _log_request_response(
         self,
+        conversation_id: str,
         provider_name: str,
         model: str,
         url: str,
@@ -183,7 +185,7 @@ class CustomOpenAIProvider(LLMProvider):
         """
         from ..error_logger import log_event
 
-        timestamp = datetime.now(timezone.utc).isoformat()
+        timestamp = datetime.now().isoformat()
 
         # Build comprehensive log entry in ProxyPal format
         log_lines = []
@@ -242,6 +244,7 @@ class CustomOpenAIProvider(LLMProvider):
 
         # Log as DEBUG level event
         await log_event(
+            conversation_id,
             event_type="v1_chat_completions",
             data={"log_content": log_content},
             level="DEBUG",
@@ -302,11 +305,15 @@ class CustomOpenAIProvider(LLMProvider):
 
     async def query(
         self,
+        conversation_id: str,
         model_id: str,
         messages: List[Dict[str, str]],
         timeout: float = 600.0,
         temperature: float = 0.7,
     ) -> Dict[str, Any]:
+        # Import timing modules inside function to avoid circular imports
+        from ..error_logger import log_event
+
         name, base_url, api_key = self._get_config()
 
         if not base_url:
@@ -321,6 +328,10 @@ class CustomOpenAIProvider(LLMProvider):
         # Normalize URL
         if base_url.endswith("/"):
             base_url = base_url[:-1]
+
+        # Start timing for ProxyPal request
+        proxypal_start_time = time_module.time()
+        proxypal_start_iso = datetime.now().isoformat()
 
         try:
             headers = {"Content-Type": "application/json"}
@@ -373,6 +384,7 @@ class CustomOpenAIProvider(LLMProvider):
                         from ..error_logger import log_model_error
 
                         await log_model_error(
+                            conversation_id,
                             model=model,
                             provider=name,
                             error_type=error_info["error_type"],
@@ -405,6 +417,7 @@ class CustomOpenAIProvider(LLMProvider):
                     }
 
                     await self._log_request_response(
+                        conversation_id,
                         provider_name=name,
                         model=model,
                         url=base_url,
@@ -420,6 +433,7 @@ class CustomOpenAIProvider(LLMProvider):
                         from ..error_logger import log_model_error
 
                         await log_model_error(
+                            conversation_id,
                             model=model,
                             provider=name,
                             error_type="empty_response_debug",
@@ -434,9 +448,38 @@ class CustomOpenAIProvider(LLMProvider):
                     elif content and reasoning:
                         content = f"<details><summary>Reasoning Process</summary>\n\n{reasoning}\n\n</details>\n\n{content}"
 
+                    # Calculate ProxyPal response time
+                    proxypal_duration = time_module.time() - proxypal_start_time
+                    proxypal_duration_rounded = round(proxypal_duration, 3)
+
+                    # Log ProxyPal request timing (success)
+                    try:
+                        await log_event(
+                            conversation_id,
+                            "proxypal_request",
+                            {
+                                "model": f"custom:{model}",
+                                "endpoint": base_url.replace("http://", "").replace(
+                                    "https://", ""
+                                ),
+                                "duration": proxypal_duration_rounded,
+                                "timestamp": proxypal_start_iso,
+                                "status": "success",
+                                "response_size": len(content) + len(reasoning),
+                            },
+                            level="INFO",
+                        )
+                    except Exception:
+                        # Don't fail the request if logging fails
+                        pass
+
                     return {"content": content, "reasoning": reasoning, "error": False}
 
         except httpx.TimeoutException as e:
+            # Calculate ProxyPal duration even on timeout
+            proxypal_duration = time_module.time() - proxypal_start_time
+            proxypal_duration_rounded = round(proxypal_duration, 3)
+
             # Timeout error - capture details
             from ..error_logger import log_model_error
 
@@ -445,18 +488,44 @@ class CustomOpenAIProvider(LLMProvider):
                 error_msg += f": {str(e)}"
 
             await log_model_error(
+                conversation_id,
                 model=model,
                 provider=name,
                 error_type="timeout",
                 message=error_msg,
                 raw_response=f"Timeout type: {type(e).__name__}",
             )
+
+            # Log ProxyPal request timing (failure)
+            try:
+                await log_event(
+                    conversation_id,
+                    "proxypal_request",
+                    {
+                        "model": f"custom:{model}",
+                        "endpoint": base_url.replace("http://", "").replace(
+                            "https://", ""
+                        ),
+                        "duration": proxypal_duration_rounded,
+                        "timestamp": proxypal_start_iso,
+                        "status": "timeout",
+                        "error": error_msg,
+                    },
+                    level="ERROR",
+                )
+            except Exception:
+                pass
+
             return {
                 "error": True,
                 "error_type": "timeout",
                 "error_message": f"[{name}] [{model}] TIMEOUT: {error_msg}",
             }
         except httpx.ConnectError as e:
+            # Calculate ProxyPal duration even on connection error
+            proxypal_duration = time_module.time() - proxypal_start_time
+            proxypal_duration_rounded = round(proxypal_duration, 3)
+
             # Connection error
             from ..error_logger import log_model_error
 
@@ -465,18 +534,44 @@ class CustomOpenAIProvider(LLMProvider):
                 error_msg += f": {str(e)}"
 
             await log_model_error(
+                conversation_id,
                 model=model,
                 provider=name,
                 error_type="connection_error",
                 message=error_msg,
                 raw_response=f"Error type: {type(e).__name__}",
             )
+
+            # Log ProxyPal request timing (failure)
+            try:
+                await log_event(
+                    conversation_id,
+                    "proxypal_request",
+                    {
+                        "model": f"custom:{model}",
+                        "endpoint": base_url.replace("http://", "").replace(
+                            "https://", ""
+                        ),
+                        "duration": proxypal_duration_rounded,
+                        "timestamp": proxypal_start_iso,
+                        "status": "connection_error",
+                        "error": error_msg,
+                    },
+                    level="ERROR",
+                )
+            except Exception:
+                pass
+
             return {
                 "error": True,
                 "error_type": "connection_error",
                 "error_message": f"[{name}] [{model}] CONNECTION_ERROR: {error_msg}",
             }
         except Exception as e:
+            # Calculate ProxyPal duration even on exception
+            proxypal_duration = time_module.time() - proxypal_start_time
+            proxypal_duration_rounded = round(proxypal_duration, 3)
+
             # Generic error - capture as much detail as possible
             from ..error_logger import log_model_error
 
@@ -486,12 +581,34 @@ class CustomOpenAIProvider(LLMProvider):
             )
 
             await log_model_error(
+                conversation_id,
                 model=model,
                 provider=name,
                 error_type="exception",
                 message=error_msg,
                 raw_response=f"Exception type: {error_type_name}, Args: {e.args}",
             )
+
+            # Log ProxyPal request timing (failure)
+            try:
+                await log_event(
+                    conversation_id,
+                    "proxypal_request",
+                    {
+                        "model": f"custom:{model}",
+                        "endpoint": base_url.replace("http://", "").replace(
+                            "https://", ""
+                        ),
+                        "duration": proxypal_duration_rounded,
+                        "timestamp": proxypal_start_iso,
+                        "status": "exception",
+                        "error": error_msg,
+                    },
+                    level="ERROR",
+                )
+            except Exception:
+                pass
+
             return {
                 "error": True,
                 "error_type": "exception",

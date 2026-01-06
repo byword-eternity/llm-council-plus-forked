@@ -3,6 +3,8 @@
 from typing import List, Dict, Any, Tuple
 import asyncio
 import logging
+import time as time_module
+from datetime import datetime
 from . import openrouter
 from . import ollama_client
 from .config import get_council_models, get_chairman_model
@@ -72,6 +74,7 @@ def get_provider_for_model(model_id: str) -> Any:
 
 
 async def query_model(
+    conversation_id: str,
     model: str,
     messages: List[Dict[str, str]],
     timeout: float = 600.0,
@@ -79,11 +82,11 @@ async def query_model(
 ) -> Dict[str, Any]:
     """Dispatch query to appropriate provider."""
     provider = get_provider_for_model(model)
-    return await provider.query(model, messages, timeout, temperature)
+    return await provider.query(conversation_id, model, messages, timeout, temperature)
 
 
 async def query_models_parallel(
-    models: List[str], messages: List[Dict[str, str]]
+    conversation_id: str, models: List[str], messages: List[Dict[str, str]]
 ) -> Dict[str, Any]:
     """Dispatch parallel query to appropriate providers."""
     tasks = []
@@ -104,7 +107,7 @@ async def query_models_parallel(
 
     async def _query_safe(m: str):
         try:
-            return m, await query_model(m, messages)
+            return m, await query_model(conversation_id, m, messages)
         except Exception as e:
             return m, {"error": True, "error_message": str(e)}
 
@@ -115,12 +118,13 @@ async def query_models_parallel(
 
 
 async def stage1_collect_responses(
-    user_query: str, search_context: str = "", request: Any = None
+    conversation_id: str, user_query: str, search_context: str = "", request: Any = None
 ) -> Any:
     """
     Stage 1: Collect individual responses from all council models.
 
     Args:
+        conversation_id: The conversation UUID for logging
         user_query: The user's question
         search_context: Optional web search results to provide context
         request: FastAPI request object for checking disconnects
@@ -130,6 +134,43 @@ async def stage1_collect_responses(
         - Subsequent yields: Individual model results (dict)
     """
     settings = get_settings()
+
+    # Start timing for Stage 1
+    stage_start_time = time_module.time()
+    stage_start_iso = datetime.now().isoformat()
+    models = get_council_models()
+    total_models = len(models)
+
+    # Log Stage 1 START
+    try:
+        loop = asyncio.get_running_loop()
+        asyncio.create_task(
+            log_event(
+                conversation_id,
+                "stage1_start",
+                {
+                    "total_models": total_models,
+                    "timestamp": stage_start_iso,
+                    "council_temperature": settings.council_temperature,
+                },
+                level="INFO",
+            )
+        )
+    except RuntimeError:
+        import asyncio as sync_asyncio
+
+        sync_asyncio.run(
+            log_event(
+                conversation_id,
+                "stage1_start",
+                {
+                    "total_models": total_models,
+                    "timestamp": stage_start_iso,
+                    "council_temperature": settings.council_temperature,
+                },
+                level="INFO",
+            )
+        )
 
     # Build search context block if search results provided
     search_context_block = ""
@@ -156,13 +197,23 @@ async def stage1_collect_responses(
         try:
             asyncio.get_running_loop()
             asyncio.create_task(
-                log_event("stage1_prompt_error", {"error": str(e)}, level="WARN")
+                log_event(
+                    conversation_id,
+                    "stage1_prompt_error",
+                    {"error": str(e)},
+                    level="WARN",
+                )
             )
         except RuntimeError:
             import asyncio as sync_asyncio
 
             sync_asyncio.run(
-                log_event("stage1_prompt_error", {"error": str(e)}, level="WARN")
+                log_event(
+                    conversation_id,
+                    "stage1_prompt_error",
+                    {"error": str(e)},
+                    level="WARN",
+                )
             )
         prompt = (
             f"{search_context_block}Question: {user_query}"
@@ -181,9 +232,135 @@ async def stage1_collect_responses(
     council_temp = settings.council_temperature
 
     async def _query_safe(m: str):
+        # Start timing for model query
+        start_time = time_module.time()
+        start_iso = datetime.now().isoformat()
+        model_id = m
+
+        # Log model query START
         try:
-            return m, await query_model(m, messages, temperature=council_temp)
+            loop = asyncio.get_running_loop()
+            asyncio.create_task(
+                log_event(
+                    conversation_id,
+                    "model_start",
+                    {
+                        "model": model_id,
+                        "stage": 1,
+                        "timestamp": start_iso,
+                        "extra": {},
+                    },
+                    level="INFO",
+                )
+            )
+        except RuntimeError:
+            import asyncio as sync_asyncio
+
+            sync_asyncio.run(
+                log_event(
+                    conversation_id,
+                    "model_start",
+                    {
+                        "model": model_id,
+                        "stage": 1,
+                        "timestamp": start_iso,
+                        "extra": {},
+                    },
+                    level="INFO",
+                )
+            )
+
+        try:
+            result = await query_model(
+                conversation_id, m, messages, temperature=council_temp
+            )
+
+            # Calculate duration
+            duration = time_module.time() - start_time
+            duration_rounded = round(duration, 3)
+
+            # Log model query COMPLETE (success)
+            try:
+                loop = asyncio.get_running_loop()
+                asyncio.create_task(
+                    log_event(
+                        conversation_id,
+                        "model_complete",
+                        {
+                            "model": model_id,
+                            "stage": 1,
+                            "duration": duration_rounded,
+                            "success": True,
+                            "attempts": 1,
+                            "timestamp": datetime.now().isoformat(),
+                        },
+                        level="INFO",
+                    )
+                )
+            except RuntimeError:
+                import asyncio as sync_asyncio
+
+                sync_asyncio.run(
+                    log_event(
+                        conversation_id,
+                        "model_complete",
+                        {
+                            "model": model_id,
+                            "stage": 1,
+                            "duration": duration_rounded,
+                            "success": True,
+                            "attempts": 1,
+                            "timestamp": datetime.now().isoformat(),
+                        },
+                        level="INFO",
+                    )
+                )
+
+            return m, result
         except Exception as e:
+            # Calculate duration
+            duration = time_module.time() - start_time
+            duration_rounded = round(duration, 3)
+
+            # Log model query COMPLETE (failure)
+            try:
+                loop = asyncio.get_running_loop()
+                asyncio.create_task(
+                    log_event(
+                        conversation_id,
+                        "model_complete",
+                        {
+                            "model": model_id,
+                            "stage": 1,
+                            "duration": duration_rounded,
+                            "success": False,
+                            "error_type": "exception",
+                            "attempts": 1,
+                            "timestamp": datetime.now().isoformat(),
+                        },
+                        level="ERROR",
+                    )
+                )
+            except RuntimeError:
+                import asyncio as sync_asyncio
+
+                sync_asyncio.run(
+                    log_event(
+                        conversation_id,
+                        "model_complete",
+                        {
+                            "model": model_id,
+                            "stage": 1,
+                            "duration": duration_rounded,
+                            "success": False,
+                            "error_type": "exception",
+                            "attempts": 1,
+                            "timestamp": datetime.now().isoformat(),
+                        },
+                        level="ERROR",
+                    )
+                )
+
             return m, {"error": True, "error_message": str(e)}
 
     # Create tasks
@@ -236,6 +413,7 @@ async def stage1_collect_responses(
                                 error_msg = "Model returned empty response"
                                 asyncio.create_task(
                                     log_model_error(
+                                        conversation_id,
                                         model=model,
                                         provider=get_provider_name(model),
                                         error_type="empty_response",
@@ -265,15 +443,22 @@ async def stage1_collect_responses(
                     logger.error(f"Error processing Stage 1 task result: {e}")
 
         # All tasks completed - yield stage completion event
+        # Calculate stage duration
+        stage_duration = time_module.time() - stage_start_time
+        stage_duration_rounded = round(stage_duration, 3)
+
         try:
             loop = asyncio.get_running_loop()
             asyncio.create_task(
                 log_event(
+                    conversation_id,
                     "stage1_complete",
                     {
                         "total": len(models),
                         "success": results_tracker["success"],
                         "failed": results_tracker["failed"],
+                        "duration": stage_duration_rounded,
+                        "timestamp": datetime.now().isoformat(),
                     },
                 )
             )
@@ -283,11 +468,14 @@ async def stage1_collect_responses(
 
             sync_asyncio.run(
                 log_event(
+                    conversation_id,
                     "stage1_complete",
                     {
                         "total": len(models),
                         "success": results_tracker["success"],
                         "failed": results_tracker["failed"],
+                        "duration": stage_duration_rounded,
+                        "timestamp": datetime.now().isoformat(),
                     },
                 )
             )
@@ -301,6 +489,7 @@ async def stage1_collect_responses(
 
 
 async def stage2_collect_rankings(
+    conversation_id: str,
     user_query: str,
     stage1_results: List[Dict[str, Any]],
     search_context: str = "",
@@ -309,11 +498,55 @@ async def stage2_collect_rankings(
     """
     Stage 2: Collect peer rankings from all council models.
 
+    Args:
+        conversation_id: The conversation UUID for logging
+        user_query: The user's question
+        stage1_results: Results from Stage 1
+        search_context: Optional web search results
+        request: FastAPI request object for checking disconnects
+
     Yields:
         - First yield: label_to_model mapping (dict)
         - Subsequent yields: Individual model results (dict)
     """
     settings = get_settings()
+
+    # Start timing for Stage 2
+    stage_start_time = time_module.time()
+    stage_start_iso = datetime.now().isoformat()
+    successful_results = [r for r in stage1_results if not r.get("error")]
+    total_models = len(successful_results)
+
+    # Log Stage 2 START
+    try:
+        loop = asyncio.get_running_loop()
+        asyncio.create_task(
+            log_event(
+                conversation_id,
+                "stage2_start",
+                {
+                    "total_models": total_models,
+                    "timestamp": stage_start_iso,
+                    "stage2_temperature": settings.stage2_temperature,
+                },
+                level="INFO",
+            )
+        )
+    except RuntimeError:
+        import asyncio as sync_asyncio
+
+        sync_asyncio.run(
+            log_event(
+                conversation_id,
+                "stage2_start",
+                {
+                    "total_models": total_models,
+                    "timestamp": stage_start_iso,
+                    "stage2_temperature": settings.stage2_temperature,
+                },
+                level="INFO",
+            )
+        )
 
     # Filter to only successful responses for ranking
     successful_results = [r for r in stage1_results if not r.get("error")]
@@ -371,14 +604,141 @@ async def stage2_collect_rankings(
     stage2_temp = settings.stage2_temperature
 
     async def _query_safe(m: str):
+        # Start timing for model query
+        start_time = time_module.time()
+        start_iso = datetime.now().isoformat()
+        model_id = m
+
+        # Log model query START
         try:
-            return m, await query_model(m, messages, temperature=stage2_temp)
+            loop = asyncio.get_running_loop()
+            asyncio.create_task(
+                log_event(
+                    conversation_id,
+                    "model_start",
+                    {
+                        "model": model_id,
+                        "stage": 2,
+                        "timestamp": start_iso,
+                        "extra": {},
+                    },
+                    level="INFO",
+                )
+            )
+        except RuntimeError:
+            import asyncio as sync_asyncio
+
+            sync_asyncio.run(
+                log_event(
+                    conversation_id,
+                    "model_start",
+                    {
+                        "model": model_id,
+                        "stage": 2,
+                        "timestamp": start_iso,
+                        "extra": {},
+                    },
+                    level="INFO",
+                )
+            )
+
+        try:
+            result = await query_model(
+                conversation_id, m, messages, temperature=stage2_temp
+            )
+
+            # Calculate duration
+            duration = time_module.time() - start_time
+            duration_rounded = round(duration, 3)
+
+            # Log model query COMPLETE (success)
+            try:
+                loop = asyncio.get_running_loop()
+                asyncio.create_task(
+                    log_event(
+                        conversation_id,
+                        "model_complete",
+                        {
+                            "model": model_id,
+                            "stage": 2,
+                            "duration": duration_rounded,
+                            "success": True,
+                            "attempts": 1,
+                            "timestamp": datetime.now().isoformat(),
+                        },
+                        level="INFO",
+                    )
+                )
+            except RuntimeError:
+                import asyncio as sync_asyncio
+
+                sync_asyncio.run(
+                    log_event(
+                        conversation_id,
+                        "model_complete",
+                        {
+                            "model": model_id,
+                            "stage": 2,
+                            "duration": duration_rounded,
+                            "success": True,
+                            "attempts": 1,
+                            "timestamp": datetime.now().isoformat(),
+                        },
+                        level="INFO",
+                    )
+                )
+
+            return m, result
         except Exception as e:
+            # Calculate duration
+            duration = time_module.time() - start_time
+            duration_rounded = round(duration, 3)
+
+            # Log model query COMPLETE (failure)
+            try:
+                loop = asyncio.get_running_loop()
+                asyncio.create_task(
+                    log_event(
+                        conversation_id,
+                        "model_complete",
+                        {
+                            "model": model_id,
+                            "stage": 2,
+                            "duration": duration_rounded,
+                            "success": False,
+                            "error_type": "exception",
+                            "attempts": 1,
+                            "timestamp": datetime.now().isoformat(),
+                        },
+                        level="ERROR",
+                    )
+                )
+            except RuntimeError:
+                import asyncio as sync_asyncio
+
+                sync_asyncio.run(
+                    log_event(
+                        conversation_id,
+                        "model_complete",
+                        {
+                            "model": model_id,
+                            "stage": 2,
+                            "duration": duration_rounded,
+                            "success": False,
+                            "error_type": "exception",
+                            "attempts": 1,
+                            "timestamp": datetime.now().isoformat(),
+                        },
+                        level="ERROR",
+                    )
+                )
+
             error_message = str(e)
             provider_name = get_provider_name(m)
 
             asyncio.create_task(
                 log_model_error(
+                    conversation_id,
                     model=m,
                     provider=provider_name,
                     error_type="ranking_error",
@@ -457,15 +817,22 @@ async def stage2_collect_rankings(
                     logger.error(f"Error processing task result: {e}")
 
         # All tasks completed - yield stage completion event
+        # Calculate stage duration
+        stage_duration = time_module.time() - stage_start_time
+        stage_duration_rounded = round(stage_duration, 3)
+
         try:
             loop = asyncio.get_running_loop()
             asyncio.create_task(
                 log_event(
+                    conversation_id,
                     "stage2_complete",
                     {
                         "total": len(successful_models),
                         "success": results_tracker["success"],
                         "failed": results_tracker["failed"],
+                        "duration": stage_duration_rounded,
+                        "timestamp": datetime.now().isoformat(),
                     },
                 )
             )
@@ -475,11 +842,14 @@ async def stage2_collect_rankings(
 
             sync_asyncio.run(
                 log_event(
+                    conversation_id,
                     "stage2_complete",
                     {
                         "total": len(successful_models),
                         "success": results_tracker["success"],
                         "failed": results_tracker["failed"],
+                        "duration": stage_duration_rounded,
+                        "timestamp": datetime.now().isoformat(),
                     },
                 )
             )
@@ -493,6 +863,7 @@ async def stage2_collect_rankings(
 
 
 async def stage3_synthesize_final(
+    conversation_id: str,
     user_query: str,
     stage1_results: List[Dict[str, Any]],
     stage2_results: List[Dict[str, Any]],
@@ -502,14 +873,49 @@ async def stage3_synthesize_final(
     Stage 3: Chairman synthesizes final response.
 
     Args:
+        conversation_id: The conversation UUID for logging
         user_query: The original user query
         stage1_results: Individual model responses from Stage 1
         stage2_results: Rankings from Stage 2
+        search_context: Optional web search context
 
     Returns:
         Dict with 'model' and 'response' keys
     """
     settings = get_settings()
+
+    # Start timing for Stage 3
+    stage_start_time = time_module.time()
+    stage_start_iso = datetime.now().isoformat()
+
+    # Log Stage 3 START
+    try:
+        loop = asyncio.get_running_loop()
+        asyncio.create_task(
+            log_event(
+                conversation_id,
+                "stage3_start",
+                {
+                    "timestamp": stage_start_iso,
+                    "chairman_temperature": settings.chairman_temperature,
+                },
+                level="INFO",
+            )
+        )
+    except RuntimeError:
+        import asyncio as sync_asyncio
+
+        sync_asyncio.run(
+            log_event(
+                conversation_id,
+                "stage3_start",
+                {
+                    "timestamp": stage_start_iso,
+                    "chairman_temperature": settings.chairman_temperature,
+                },
+                level="INFO",
+            )
+        )
 
     # Build comprehensive context for chairman (only include successful responses)
     stage1_text = "\n\n".join(
@@ -577,7 +983,7 @@ async def stage3_synthesize_final(
 
     try:
         response = await query_model(
-            chairman_model, messages, temperature=chairman_temp
+            conversation_id, chairman_model, messages, temperature=chairman_temp
         )
 
         # Check for error in response
@@ -592,6 +998,7 @@ async def stage3_synthesize_final(
             provider_name = get_provider_name(chairman_model)
             asyncio.create_task(
                 log_model_error(
+                    conversation_id,
                     model=chairman_model,
                     provider=provider_name,
                     error_type="synthesis_error",
@@ -623,13 +1030,23 @@ async def stage3_synthesize_final(
         if not final_response:
             final_response = "No response generated by the Chairman."
 
+        # Calculate stage duration
+        stage_duration = time_module.time() - stage_start_time
+        stage_duration_rounded = round(stage_duration, 3)
+
         # Log stage 3 completion event
         try:
             loop = asyncio.get_running_loop()
             asyncio.create_task(
                 log_event(
+                    conversation_id,
                     "stage3_complete",
-                    {"chairman_model": chairman_model, "success": True},
+                    {
+                        "chairman_model": chairman_model,
+                        "success": True,
+                        "duration": stage_duration_rounded,
+                        "timestamp": datetime.now().isoformat(),
+                    },
                 )
             )
         except RuntimeError:
@@ -638,21 +1055,37 @@ async def stage3_synthesize_final(
 
             sync_asyncio.run(
                 log_event(
+                    conversation_id,
                     "stage3_complete",
-                    {"chairman_model": chairman_model, "success": True},
+                    {
+                        "chairman_model": chairman_model,
+                        "success": True,
+                        "duration": stage_duration_rounded,
+                        "timestamp": datetime.now().isoformat(),
+                    },
                 )
             )
 
         return {"model": chairman_model, "response": final_response, "error": False}
 
     except Exception as e:
+        # Calculate stage duration even on error
+        stage_duration = time_module.time() - stage_start_time
+        stage_duration_rounded = round(stage_duration, 3)
+
         # Log unexpected error
         try:
             loop = asyncio.get_running_loop()
             asyncio.create_task(
                 log_event(
+                    conversation_id,
                     "stage3_error",
-                    {"chairman_model": chairman_model, "error": str(e)},
+                    {
+                        "chairman_model": chairman_model,
+                        "error": str(e),
+                        "duration": stage_duration_rounded,
+                        "timestamp": datetime.now().isoformat(),
+                    },
                     level="ERROR",
                 )
             )
@@ -661,8 +1094,14 @@ async def stage3_synthesize_final(
 
             sync_asyncio.run(
                 log_event(
+                    conversation_id,
                     "stage3_error",
-                    {"chairman_model": chairman_model, "error": str(e)},
+                    {
+                        "chairman_model": chairman_model,
+                        "error": str(e),
+                        "duration": stage_duration_rounded,
+                        "timestamp": datetime.now().isoformat(),
+                    },
                     level="ERROR",
                 )
             )

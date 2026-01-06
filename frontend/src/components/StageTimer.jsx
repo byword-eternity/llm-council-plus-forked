@@ -7,7 +7,7 @@ export default function StageTimer({ startTime, endTime, label = "Elapsed" }) {
         if (!startTime) return;
 
         if (endTime) {
-            // Final duration
+            // Final duration - timer is complete
             setElapsed(endTime - startTime);
             return;
         }
@@ -27,14 +27,27 @@ export default function StageTimer({ startTime, endTime, label = "Elapsed" }) {
         return `${seconds}s`;
     };
 
+    const isComplete = !!endTime;
+
     return (
         <span className="stage-timer" style={{
             marginLeft: '10px',
             fontSize: '12px',
-            color: '#666',
-            fontFamily: 'monospace'
+            fontFamily: 'monospace',
+            display: 'inline-flex',
+            alignItems: 'center',
+            gap: '4px',
+            color: isComplete ? '#22c55e' : '#666', // Green when complete, gray when running
+            transition: 'color 0.3s ease'
         }}>
-            {label}: {formatTime(elapsed)}
+            {isComplete ? (
+                <>
+                    <span style={{ fontSize: '10px' }}>✓</span>
+                    <span>{label}: {formatTime(elapsed)}</span>
+                </>
+            ) : (
+                <span>{label}: {formatTime(elapsed)}</span>
+            )}
         </span>
     );
 }
