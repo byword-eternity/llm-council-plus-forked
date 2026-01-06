@@ -22,9 +22,14 @@ Instead of asking a single LLM (like ChatGPT or Claude) for an answer, **LLM Cou
 The result? More balanced, accurate, and thoroughly vetted responses that leverage the collective intelligence of multiple AI models.
 
 <p align="center">
-  <a href="https://www.youtube.com/watch?v=NUmQFGAwD3g">
-    <img src="https://img.youtube.com/vi/NUmQFGAwD3g/0.jpg" alt="LLM Council Plus Demo" width="100%">
-  </a>
+  <div align="center">
+    <a href="https://www.youtube.com/watch?v=HOdyIyccOCE" target="_blank">
+      <img src="https://img.youtube.com/vi/HOdyIyccOCE/hqdefault.jpg" alt="LLM Council Plus Long Demo" width="48%">
+    </a>
+    <a href="https://www.youtube.com/watch?v=NUmQFGAwD3g" target="_blank">
+      <img src="https://img.youtube.com/vi/NUmQFGAwD3g/hqdefault.jpg" alt="LLM Council Plus Short Demo" width="48%">
+    </a>
+  </div>
 </p>
 
 ---
@@ -206,8 +211,25 @@ Then open **http://localhost:5173** in your browser.
 
 ### Network Access
 
-To access from other devices on your network:
+The application is configured to be accessible from other devices on your local network.
 
+**Using start.sh (automatic):**
+The start script now exposes both frontend and backend on the network automatically. Just run `./start.sh` and access from any device.
+
+**Access URLs:**
+- **Local:** `http://localhost:5173`
+- **Network:** `http://YOUR_IP:5173` (e.g., `http://192.168.1.100:5173`)
+
+**Find your network IP:**
+```bash
+# macOS/Linux
+ifconfig | grep "inet " | grep -v 127.0.0.1
+
+# Or use hostname
+hostname -I
+```
+
+**Manual setup (if not using start.sh):**
 ```bash
 # Backend already listens on 0.0.0.0:8001
 
@@ -215,6 +237,8 @@ To access from other devices on your network:
 cd frontend
 npm run dev -- --host
 ```
+
+The frontend automatically detects the hostname and connects to the backend on the same IP. CORS is configured to allow requests from any hostname on ports 5173 and 3000.
 
 ---
 
