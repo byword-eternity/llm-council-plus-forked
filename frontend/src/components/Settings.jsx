@@ -1092,6 +1092,17 @@ event.target.value = '';
     }
   };
 
+  const handleDownloadLogFile = (filename) => {
+    // Create a download link for the log file
+    const link = document.createElement('a');
+    link.href = `/api/logs/file/${encodeURIComponent(filename)}?lines=10000`;
+    link.download = filename;
+    link.style.display = 'none';
+    document.body.appendChild(link);
+    link.click();
+    document.body.removeChild(link);
+  };
+
   const handleSave = async () => {
     setIsSaving(true);
     setError(null);
@@ -1591,15 +1602,27 @@ event.target.value = '';
                           className={`log-file-item ${selectedLogFile === file.name ? 'log-file-active' : ''}`}
                           onClick={() => handleSelectLogFile(file.name)}
                         >
-                          <span className="log-file-name">{file.name}</span>
-                          <div className="log-file-meta">
-                            <span className="log-file-size">
-                              {(file.size / 1024).toFixed(1)} KB
-                            </span>
-                            <span className="log-file-date">
-                              {new Date(file.modified).toLocaleString()}
-                            </span>
+                          <div className="log-file-info">
+                            <span className="log-file-name">{file.name}</span>
+                            <div className="log-file-meta">
+                              <span className="log-file-size">
+                                {(file.size / 1024).toFixed(1)} KB
+                              </span>
+                              <span className="log-file-date">
+                                {new Date(file.modified).toLocaleString()}
+                              </span>
+                            </div>
                           </div>
+                          <button
+                            className="log-file-download"
+                            onClick={(e) => {
+                              e.stopPropagation();
+                              handleDownloadLogFile(file.name);
+                            }}
+                            title="Download log file"
+                          >
+                            ⬇
+                          </button>
                         </div>
                       ))}
                     </div>

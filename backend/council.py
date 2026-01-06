@@ -152,7 +152,18 @@ async def stage1_collect_responses(
             user_query=user_query, search_context_block=search_context_block
         )
     except (KeyError, AttributeError, TypeError) as e:
-        logger.warning(f"Error formatting Stage 1 prompt: {e}. Using fallback.")
+        # Log warning and use fallback prompt
+        try:
+            asyncio.get_running_loop()
+            asyncio.create_task(
+                log_event("stage1_prompt_error", {"error": str(e)}, level="WARN")
+            )
+        except RuntimeError:
+            import asyncio as sync_asyncio
+
+            sync_asyncio.run(
+                log_event("stage1_prompt_error", {"error": str(e)}, level="WARN")
+            )
         prompt = (
             f"{search_context_block}Question: {user_query}"
             if search_context_block
@@ -180,6 +191,7 @@ async def stage1_collect_responses(
 
     # Process as they complete
     pending = set(tasks)
+    results_tracker = {"success": 0, "failed": 0}
     try:
         while pending:
             # Check for client disconnect
@@ -211,6 +223,7 @@ async def stage1_collect_responses(
                                     "error_message", "Unknown error"
                                 ),
                             }
+                            results_tracker["failed"] += 1
                         else:
                             # Successful response - ensure content is always a string
                             content = response.get("content", "")
@@ -235,12 +248,14 @@ async def stage1_collect_responses(
                                     "error": True,
                                     "error_message": error_msg,
                                 }
+                                results_tracker["failed"] += 1
                             else:
                                 result = {
                                     "model": model,
                                     "response": content,
                                     "error": None,
                                 }
+                                results_tracker["success"] += 1
 
                     if result:
                         yield result
@@ -248,6 +263,34 @@ async def stage1_collect_responses(
                     raise
                 except Exception as e:
                     logger.error(f"Error processing Stage 1 task result: {e}")
+
+        # All tasks completed - yield stage completion event
+        try:
+            loop = asyncio.get_running_loop()
+            asyncio.create_task(
+                log_event(
+                    "stage1_complete",
+                    {
+                        "total": len(models),
+                        "success": results_tracker["success"],
+                        "failed": results_tracker["failed"],
+                    },
+                )
+            )
+        except RuntimeError:
+            # Not in async context, run synchronously
+            import asyncio as sync_asyncio
+
+            sync_asyncio.run(
+                log_event(
+                    "stage1_complete",
+                    {
+                        "total": len(models),
+                        "success": results_tracker["success"],
+                        "failed": results_tracker["failed"],
+                    },
+                )
+            )
 
     except asyncio.CancelledError:
         # Ensure all tasks are cancelled if we get cancelled
@@ -350,6 +393,7 @@ async def stage2_collect_rankings(
 
     # Process as they complete
     pending = set(tasks)
+    results_tracker = {"success": 0, "failed": 0}
     try:
         while pending:
             # Check for client disconnect
@@ -381,6 +425,7 @@ async def stage2_collect_rankings(
                                     "error_message", "Unknown error"
                                 ),
                             }
+                            results_tracker["failed"] += 1
                         else:
                             # Ensure content is always a string before parsing
                             full_text = response.get("content", "")
@@ -402,6 +447,7 @@ async def stage2_collect_rankings(
                                 "parsed_ranking": parsed,
                                 "error": None,
                             }
+                            results_tracker["success"] += 1
 
                     if result:
                         yield result
@@ -409,6 +455,34 @@ async def stage2_collect_rankings(
                     raise
                 except Exception as e:
                     logger.error(f"Error processing task result: {e}")
+
+        # All tasks completed - yield stage completion event
+        try:
+            loop = asyncio.get_running_loop()
+            asyncio.create_task(
+                log_event(
+                    "stage2_complete",
+                    {
+                        "total": len(successful_models),
+                        "success": results_tracker["success"],
+                        "failed": results_tracker["failed"],
+                    },
+                )
+            )
+        except RuntimeError:
+            # Not in async context, run synchronously
+            import asyncio as sync_asyncio
+
+            sync_asyncio.run(
+                log_event(
+                    "stage2_complete",
+                    {
+                        "total": len(successful_models),
+                        "success": results_tracker["success"],
+                        "failed": results_tracker["failed"],
+                    },
+                )
+            )
 
     except asyncio.CancelledError:
         # Ensure all tasks are cancelled if we get cancelled
@@ -549,10 +623,49 @@ async def stage3_synthesize_final(
         if not final_response:
             final_response = "No response generated by the Chairman."
 
+        # Log stage 3 completion event
+        try:
+            loop = asyncio.get_running_loop()
+            asyncio.create_task(
+                log_event(
+                    "stage3_complete",
+                    {"chairman_model": chairman_model, "success": True},
+                )
+            )
+        except RuntimeError:
+            # Not in async context, run synchronously
+            import asyncio as sync_asyncio
+
+            sync_asyncio.run(
+                log_event(
+                    "stage3_complete",
+                    {"chairman_model": chairman_model, "success": True},
+                )
+            )
+
         return {"model": chairman_model, "response": final_response, "error": False}
 
     except Exception as e:
-        logger.error(f"Unexpected error in Stage 3 synthesis: {e}")
+        # Log unexpected error
+        try:
+            loop = asyncio.get_running_loop()
+            asyncio.create_task(
+                log_event(
+                    "stage3_error",
+                    {"chairman_model": chairman_model, "error": str(e)},
+                    level="ERROR",
+                )
+            )
+        except RuntimeError:
+            import asyncio as sync_asyncio
+
+            sync_asyncio.run(
+                log_event(
+                    "stage3_error",
+                    {"chairman_model": chairman_model, "error": str(e)},
+                    level="ERROR",
+                )
+            )
         return {
             "model": chairman_model,
             "response": f"Error: Unable to generate final synthesis due to unexpected error.",

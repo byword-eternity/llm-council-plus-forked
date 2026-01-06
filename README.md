@@ -325,6 +325,37 @@ Connect to any OpenAI-compatible API:
 | `Enter` | Send message |
 | `Shift+Enter` | New line in input |
 
+### Logging & Debugging
+
+LLM Council Plus includes a comprehensive logging system to help debug model errors, especially when using custom endpoints like NanoGPT or aggregator services.
+
+**Enable Logging:**
+1. Go to **Settings** → **Logs** tab
+2. Toggle **Enable Logging** on
+3. Choose log level:
+   - **Errors Only** - Log only model failures (default)
+   - **All Events** - Log errors + stage completions
+   - **Debug** - Log everything including raw API responses
+
+**View Logs:**
+- **Recent Errors** - Shows last 100 errors in memory
+- **Log Files** - Browse and download log files from `data/logs/`
+- **Download** - Export logs for offline analysis
+
+**Log Format:**
+```
+2026-01-06 14:30:45 | ERROR | [NanoGPT] [custom:gpt-4-turbo] RATE_LIMIT: Rate limit exceeded.
+2026-01-06 14:30:50 | INFO  | [stage1_complete] {"total": 8, "success": 6, "failed": 2}
+```
+
+**Features:**
+- Automatic log rotation (10MB max per file)
+- 7-day retention with hourly cleanup
+- API key sanitization (never logged)
+- UTC timestamps for consistency
+
+See [docs/logging-guide.md](docs/logging-guide.md) for detailed documentation.
+
 ---
 
 ## Tech Stack
