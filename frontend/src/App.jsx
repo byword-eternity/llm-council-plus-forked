@@ -358,6 +358,15 @@ function App() {
                 const messages = [...prev.messages];
                 const lastMsg = messages[messages.length - 1];
 
+                // Defensive check - ensure we're not starting an already running stage
+                if (lastMsg.timers?.stage1Start && !lastMsg.timers?.stage1End) {
+                  console.log('DEBUG: stage1_start received but stage already running', {
+                    existingStart: lastMsg.timers.stage1Start,
+                    newStart: Date.now()
+                  });
+                  return prev; // No update needed
+                }
+
                 const updatedLastMsg = {
                   ...lastMsg,
                   loading: {
@@ -371,6 +380,10 @@ function App() {
                 };
 
                 messages[messages.length - 1] = updatedLastMsg;
+                console.log('DEBUG: stage1_start processed', {
+                  stage1Start: updatedLastMsg.timers.stage1Start,
+                  loading: updatedLastMsg.loading.stage1
+                });
                 return { ...prev, messages };
               });
               break;
@@ -429,6 +442,15 @@ function App() {
                 const messages = [...prev.messages];
                 const lastMsg = messages[messages.length - 1];
 
+                // Defensive check - ensure we're not overwriting an already completed stage
+                if (lastMsg.timers?.stage1End) {
+                  console.log('DEBUG: stage1_complete received but timer already ended', {
+                    existingEnd: lastMsg.timers.stage1End,
+                    newEnd: Date.now()
+                  });
+                  return prev; // No update needed
+                }
+
                 // Immutable update to prevent React rendering issues
                 const updatedLastMsg = {
                   ...lastMsg,
@@ -444,6 +466,10 @@ function App() {
                 };
 
                 messages[messages.length - 1] = updatedLastMsg;
+                console.log('DEBUG: stage1_complete processed', {
+                  stage1End: updatedLastMsg.timers.stage1End,
+                  loading: updatedLastMsg.loading.stage1
+                });
                 return { ...prev, messages };
               });
               break;

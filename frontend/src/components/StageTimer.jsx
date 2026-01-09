@@ -8,17 +8,36 @@ export default function StageTimer({ startTime, endTime, label = "Elapsed" }) {
 
         if (endTime) {
             // Final duration - timer is complete
-            setElapsed(endTime - startTime);
+            const finalElapsed = endTime - startTime;
+            setElapsed(finalElapsed);
+            console.log('DEBUG: Timer stopped', {
+                startTime,
+                endTime,
+                finalElapsed,
+                label
+            });
             return;
         }
 
         // Active timer
+        console.log('DEBUG: Timer started', {
+            startTime,
+            endTime,
+            label
+        });
         const interval = setInterval(() => {
             setElapsed(Date.now() - startTime);
         }, 100); // Update every 100ms for smoothness
 
-        return () => clearInterval(interval);
-    }, [startTime, endTime]);
+        return () => {
+            clearInterval(interval);
+            console.log('DEBUG: Timer cleanup', {
+                startTime,
+                endTime,
+                label
+            });
+        };
+    }, [startTime, endTime, label]);
 
     if (!startTime) return null;
 
